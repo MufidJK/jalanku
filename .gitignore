@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Model dan hasil training (tidak masuk Git)
+*.pt
+runs/
+
+# Foto uji lokal (ada wajah orang)
+foto.*
