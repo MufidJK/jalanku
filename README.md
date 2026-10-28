@@ -27,7 +27,7 @@ Pakai **PowerShell** lewat VS Code: buka VS Code, `ctrl + j` > New Terminal, pas
 2. Clone repo ke `C:\`:
    ```
    cd C:\
-   git clone https://github.com/mufidjk/jalanku.git
+   git clone https://github.com/MufidJK/jalanku.git
    cd jalanku
    ```
    Repo ini private. Pastikan sudah accept undangan di GitHub. Saat clone, mungkin muncul jendela login GitHub: login dengan akun yang diundang.
