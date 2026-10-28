@@ -21,9 +21,9 @@ Pakai **PowerShell** lewat VS Code: buka VS Code, `ctrl + j` > New Terminal, pas
 
 1. Pasang **Python 3.12.10** (bukan versi lain), Git, dan VS Code. Cek versinya:
    ```
-   python --version
+   py -3.12 --version
    ```
-   Harus keluar `Python 3.12.10`. Kalau beda, kabari tim sebelum lanjut.
+   Harus keluar `Python 3.12.10`. Kalau beda atau error, kabari tim sebelum lanjut.
 2. Clone repo ke `C:\`:
    ```
    cd C:\
@@ -31,16 +31,12 @@ Pakai **PowerShell** lewat VS Code: buka VS Code, `ctrl + j` > New Terminal, pas
    cd jalanku
    ```
    Repo ini private. Pastikan sudah accept undangan di GitHub. Saat clone, mungkin muncul jendela login GitHub: login dengan akun yang diundang.
-3. Buat dan aktifkan virtual environment:
+3. Buat dan aktifkan virtual environment (wajib pakai `py -3.12`, supaya tidak nyasar ke versi Python lain):
    ```
-   python -m venv venv
+   py -3.12 -m venv venv
    venv\Scripts\activate
    ```
-   Berhasil kalau prompt diawali `(venv)`. Kalau muncul error "running scripts is disabled", jalankan ini sekali, jawab `Y`, lalu ulangi `venv\Scripts\activate`:
-   ```
-   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-   ```
-   Setiap kali buka terminal baru, aktifkan lagi: `cd C:\jalanku` lalu `venv\Scripts\activate`.
+   Berhasil kalau prompt diawali `(venv)` dan `python --version` menunjukkan `Python 3.12.10`.
 4. Pasang PyTorch (GPU NVIDIA, CUDA 13.2). Langkah ini harus **sebelum** langkah 5:
    ```
    pip install torch==2.14.1 torchvision==0.29.1 --index-url https://download.pytorch.org/whl/cu132
