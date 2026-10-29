@@ -1,4 +1,4 @@
-# Daftar Kelas dan Panduan Anotasi (v1, 29 Oktober 2026)
+# Daftar Kelas dan Panduan Anotasi (v1.1, 29 Oktober 2026)
 
 Status: sementara, direvisi setelah video kampus pertama dan uji auto-label.
 
@@ -13,7 +13,8 @@ Status: sementara, direvisi setelah video kampus pertama dan uji auto-label.
 | 4 | tanaman_pot | Pot dan tanamannya, satu objek |
 | 5 | kursi | Kursi dan bangku |
 | 6 | kendaraan | Motor dan mobil yang terparkir |
-| 7 | jalur_jalan | Area datar yang bisa dilalui pejalan kaki |
+| 7 | jalur_jalan | Permukaan untuk pejalan kaki, termasuk dalam gedung |
+| 8 | jalan_kendaraan | Jalan yang dipakai motor dan mobil |
 
 ## Aturan umum
 - Beri label hanya objek yang terlihat jelas. Bagian yang tertutup jangan ditebak.
@@ -26,7 +27,8 @@ Status: sementara, direvisi setelah video kampus pertama dan uji auto-label.
 - **pohon:** batang saja dari pangkal ke atas sejauh terlihat. Pohon dalam pot masuk tanaman_pot.
 - **tanaman_pot:** pot dan tanaman dalam satu kotak atau mask.
 - **orang:** semua postur masuk satu kelas. Orang yang hanya sebagian kecil terlihat (sementara: kurang dari sekitar sepertiga tubuh) dilewati.
-- **jalur_jalan:** permukaan yang diperuntukkan pejalan kaki: trotoar, koridor, selasar, lobi, jalur paving. Rumput, parkiran dengan kendaraan, dan area tertutup objek tidak masuk.
+- **jalur_jalan:** permukaan yang diperuntukkan pejalan kaki: lantai lobi dan koridor, selasar, trotoar, jalur paving. Rumput, parkiran dengan kendaraan, dan area tertutup objek tidak masuk.
+- **jalan_kendaraan:** jalan yang dipakai motor dan mobil. Kalau ragu permukaannya untuk pejalan kaki atau kendaraan, dan kendaraan memakainya, label jalan_kendaraan.
 
 ## Batasan yang diakui
 - Dahan rendah setinggi kepala kemungkinan tidak terdeteksi.
