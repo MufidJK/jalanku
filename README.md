@@ -30,7 +30,7 @@ Pakai **PowerShell** lewat VS Code: buka VS Code, `ctrl + j` > New Terminal, pas
    git clone https://github.com/MufidJK/jalanku.git
    cd jalanku
    ```
-   Repo ini private. Pastikan sudah accept undangan di GitHub. Saat clone, mungkin muncul jendela login GitHub: login dengan akun yang diundang.
+   Repo ini publik. Pastikan sudah accept undangan di GitHub. Saat clone, mungkin muncul jendela login GitHub: login dengan akun yang diundang.
 3. Buat dan aktifkan virtual environment (wajib pakai `py -3.12`, supaya tidak nyasar ke versi Python lain):
    ```
    py -3.12 -m venv venv
