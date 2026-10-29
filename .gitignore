@@ -225,3 +225,13 @@ runs/
 
 # Foto uji lokal (ada wajah orang)
 foto.*
+
+# Video dan olahan data kampus (memuat wajah orang, tidak masuk Git)
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.zip
+data/*
+!data/.gitkeep
+!data/README.md
