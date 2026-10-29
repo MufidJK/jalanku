@@ -12,7 +12,7 @@ Aplikasi ML pendeteksi rintangan dan jalur jalan untuk pengguna tunanetra lewat 
 
 ## Sedang jalan
 - Kenzu: survei dataset publik
-- Nicksen: latihan PR dan draf panduan anotasi
+- Nicksen: latihan PR (Pull Request) dan draf panduan anotasi
 
 ## Belum
 - Daftar kelas final, video kampus, dataset sendiri, model sendiri, kode final, keputusan cara app jalan di HP
