@@ -1,30 +1,50 @@
 # Rencana Perekaman Video
 
 ## Aturan rekam
-- Pegang HP setinggi dada dan sejajar mata, agak menunduk. Posisi layar (vertikal atau horizontal) sama di semua video; pilih sesuai cara app dipakai nanti.
+- POV utama setinggi dada (untuk training dan test). POV sejajar mata hanya tambahan untuk training, tidak dipakai di test.
+- HP posisi portrait (vertikal), sama di semua video. Kamera 1x, jangan zoom atau wide.
 - Jalan pelan, berhenti sebentar di depan rintangan.
-- Resolusi 1080p, 30 fps. Jangan pakai mode zoom.
-- Durasi per video 2 sampai 5 menit, satu lokasi per video.
+- Resolusi 1080p, 30 fps.
+- Durasi per video 30 detik sampai 5 menit. Sebisa mungkin satu lokasi per video.
 - Variasi: siang terang, sore, area ramai dan sepi.
 - Hindari close-up wajah. Tetap akan diblur otomatis sebelum dipakai.
 
 ## Penamaan file
 lokasi_tanggal_sesi_pov.mp4
 ```
-contoh: lobi-gedung-a_2026-11-02_01_dada.mp4
-        lobi-gedung-a_2026-11-02_01_mata.mp4
+contoh: lorong-lt9-ubm-tower_2026-10-30_01_dada.mp4
+        lorong-lt9-ubm-tower_2026-10-30_01_mata.mp4
 ```
 
-## Lokasi (isi dan centang)
-- [ ] Lobi dan koridor dalam gedung (lantai licin, pintu kaca)
-- [ ] Tangga dan undakan
-- [ ] Selasar dan jalur paving
-- [ ] Taman (pohon, kursi)
-- [ ] Parkiran (kendaraan, tiang)
-- [ ] Jalan kendaraan dalam kampus
-
 ## Set test
-Pilih 1 sampai 2 lokasi yang TIDAK dipakai untuk training sama sekali.
+Lokasi test tidak boleh dipakai untuk training sama sekali.
+- **Lantai 11 UBM Tower** (selasar dan area pot). Indoor, kemungkinan tempat pameran.
+- **Taman kampus** (di bawah Alfamart lt2). Outdoor. Rekam POV dada saja.
+
+## Status rekaman (per 1 November 2026)
+Total 39 video. Mata direkam Mufid, dada direkam Kenzu, kecuali disebut lain.
+
+| Lokasi | Area | Tipe | Mata | Dada | Split |
+|---|---|---|---|---|---|
+| selasar-lt11 | UBM Tower | indoor | 01 | 01 | test |
+| pot-lt11 | UBM Tower | indoor | 01 | 01 | test |
+| taman | antara Alfa Tower dan UBM Tower | outdoor | - | belum direkam | test |
+| lab-iota1-lt9 | UBM Tower | indoor | 01, 02 | 01, 02 | train |
+| lorong-lt9 | UBM Tower | indoor | 01, 02, 03 | 01, 02, 03 | train |
+| tangga-naik-lt9-lt10 | UBM Tower | indoor | 01 | 01 | train |
+| perpus-lt9 | UBM Tower | indoor | 01 | 01 | train |
+| parkiran-motor-b1 | UBM Tower | indoor (basement) | 01 | 01, 02 | train |
+| lab1-lt5 | Alfa Tower | indoor | 01, 02 | 01 (Mufid), 02 | train |
+| lorong-lt5 | Alfa Tower | indoor | 01 | 01 | train |
+| lorong-lt3-eskalator | Alfa Tower | indoor | 01 | 01 | train |
+| tangga-naik-lt3 | Alfa Tower | indoor | 01 | 01 | train |
+| tangga-naik-alfa-lt2 | depan Maxx Coffee | semi-outdoor | 01 | 01 | train |
+| alfamart-lt2 | antara Alfa Tower dan UBM Tower | indoor | 01 | 01 | train |
+| dapsut | Alfa Tower, parkiran mobil, Dapur Alsut | indoor dan outdoor | 01, 02 | 01, 02 | train |
+
+Catatan:
+- Taman tidak terlihat di video tangga-naik-alfa-lt2 dan alfamart-lt2. Saat ekstraksi frame, cek lagi; frame yang memperlihatkan taman dibuang.
+- Data outdoor untuk training hanya dari dapsut. Kekurangannya ditutup dataset publik.
 
 ## Penyimpanan
-Video mentah disimpan di Google Drive bersama, folder video-mentah. Jangan di-commit ke repo.
+Video mentah disimpan di Google Drive `JalanKu-VideoMentah`, satu subfolder per orang. Jangan di-commit ke repo.

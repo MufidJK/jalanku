@@ -3,7 +3,9 @@
 Isi folder ini tidak di-commit (lihat `.gitignore`). Hanya file ini dan `.gitkeep` yang masuk Git.
 
 ## Di mana datasetnya
-- Video dan dataset kampus: Google Drive bersama (akses hanya anggota tim). Minta link ke Mufid.
+- Video mentah: Google Drive `JalanKu-VideoMentah`, satu subfolder per orang. Isinya belum diblur, jadi jangan dibagikan ke luar tim.
+- Frame yang sudah diblur, dataset kampus berlabel, model, dan hasil: Google Drive `JalanKu-Data`.
+- Link Drive hanya dibagikan lewat grup. Minta ke Mufid.
 - Dataset publik: link dan cara download ada di `docs/survei-dataset.md`. Jangan upload ulang ke repo atau Drive.
 
 ## Struktur lokal yang disarankan
