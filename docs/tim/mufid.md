@@ -8,7 +8,7 @@
 ## Perangkat dan Environment
 - **Laptop:** Lenovo LOQ 15IRH8
 - **GPU:** NVIDIA GeForce RTX 4060 Laptop GPU
-- **VRAM:** biasanya 8 GB
+- **VRAM:** 8 GB
 - **Python:** 3.12.10
 - **PyTorch:** 2.14.1+cu132
 - **Torchvision:** 0.29.1+cu132
