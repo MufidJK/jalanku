@@ -22,6 +22,7 @@ Status: sementara, direvisi setelah video kampus pertama dan uji auto-label.
 - Objek terpotong di tepi gambar tetap dilabel kalau bagian yang terlihat jelas.
 - Objek yang terlalu kecil dilewati (sementara: kurang dari sekitar 32 piksel pada sisi terpendek di gambar 640).
 - Jangan melabel pantulan di kaca, gambar di poster, atau patung.
+- Rintangan di luar 10 kelas (tempat sampah, plang, tembok, pembatas) tidak dilabel, dan lantai di bawahnya tidak masuk jalur_jalan.
 - Ragu antara dua kelas: tulis di catatan dan tanya tim, jangan tebak.
 
 ## Aturan per kelas

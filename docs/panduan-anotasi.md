@@ -257,6 +257,7 @@ Jangan memberi anotasi pada:
 - Gambar orang atau kendaraan pada poster.
 - Gambar objek pada layar.
 - Patung.
+- Rintangan di luar 10 kelas (misalnya tempat sampah, plang, tembok, pembatas). Lantai di bawah rintangan itu juga tidak masuk `jalur_jalan`.
 - Eskalator sementara.
 - Objek yang terlalu kecil untuk dianotasi dengan jelas.
 
