@@ -153,7 +153,7 @@ def process_video(video: Path, out_root: Path, model, args) -> dict:
             persons_total += n_blur
             frames_with_person += n_blur > 0
             rows.append([name, f"{ts:.3f}", n_blur, "" if diff is None else f"{diff:.2f}"])
-    except Exception:
+    except BaseException:  # termasuk Ctrl+C (KeyboardInterrupt)
         shutil.rmtree(out_dir, ignore_errors=True)  # jangan tinggalkan hasil setengah jadi
         raise
     finally:
@@ -217,11 +217,15 @@ def main() -> None:
     for video in videos:
         out_dir = out_root / video.stem
         print(f"== {video.name}")
-        if out_dir.is_dir() and any(out_dir.iterdir()):
+        # _manifest.csv ditulis paling akhir -> penanda bahwa video ini sudah selesai
+        if (out_dir / "_manifest.csv").exists():
             if not args.overwrite:
                 print(f"   DILEWATI: {out_dir} sudah ada (pakai --overwrite untuk membuat ulang)\n")
                 skipped.append(video.name)
                 continue
+            shutil.rmtree(out_dir)
+        elif out_dir.is_dir():
+            print("   Folder belum lengkap (tidak ada _manifest.csv), dibuat ulang")
             shutil.rmtree(out_dir)
         try:
             s = process_video(video, out_root, model, args)
