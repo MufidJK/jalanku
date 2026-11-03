@@ -161,7 +161,7 @@ Pemetaan 20 kelas yang terlihat:
 - **Label bolong**: objek yang ada di gambar tapi tidak dilabel karena dataset aslinya tidak punya kelas itu (misalnya tepi trotoar di gambar ROD). Dicek saat pilot.
 - **Keseimbangan**: ROD jauh lebih besar dari dataset lain dan data kampus. Ambil subset secukupnya.
 
-## Dataset yang ditolak (11)
+## Dataset yang ditolak (12)
 
 | Nama | Alasan |
 |------|--------|
@@ -176,6 +176,7 @@ Pemetaan 20 kelas yang terlihat:
 | Freiburg | data robot + LiDAR |
 | RampNet | panorama Street View |
 | uB-VisioGeoloc | tidak ada link download |
+| Objek Trotoar (skripsi-ridho) | banyak foto ke atas (lampu jalan berlatar langit), bukan POV pejalan kaki; gambar sudah teraugmentasi mosaic dan cutout sehingga jumlah aslinya jauh lebih kecil |
 
 Juga tidak bisa dipakai: ITOD Indonesian Traffic Obstacle Dataset (kamera mobil), data skripsi ITS Surabaya tentang trotoar (tidak publik), guidio-blind-assist (tidak ada dataset), dataset captioning trotoar Indonesia (bukan label deteksi).
 
