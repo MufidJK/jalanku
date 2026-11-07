@@ -9,7 +9,7 @@ Status pencarian: **ditutup**. Kalau setelah pilot ada kelas yang lemah, solusin
 
 Rencana: beberapa dataset publik digabung jadi satu dataset JalanKu. Kelas tiap dataset dipetakan ke ID kelas JalanKu (0 sampai 9), kelas yang tidak dipakai dibuang.
 
-Tanda **[CEK]** berarti informasinya belum diverifikasi. Tanda **(usulan)** berarti pemetaan kelas belum diputuskan tim.
+Tanda **[CEK]** berarti informasinya belum diverifikasi.
 
 ## Ringkasan dataset yang lolos (6)
 
@@ -36,7 +36,7 @@ Daftar 25 kelas dan pemetaan:
 
 | ID ROD | Kelas ROD | Kelas JalanKu |
 |--------|-----------|---------------|
-| 0 | Bike | (usulan) cek dulu isinya sepeda atau motor |
+| 0 | Bike | kendaraan (isinya campur sepeda dan motor; sejak v1.3 sepeda masuk kendaraan) |
 | 1 | Building | dibuang |
 | 2 | Car | kendaraan |
 | 3 | Person | orang |
@@ -51,9 +51,9 @@ Daftar 25 kelas dan pemetaan:
 | 12 | Tree | pohon |
 | 13 | Guard rail | dibuang |
 | 14 | Pedestrian crosswalk | dibuang |
-| 15 | Truck | (usulan) kendaraan |
-| 16 | Bus | (usulan) kendaraan |
-| 17 | Bench | (usulan) kursi |
+| 15 | Truck | kendaraan |
+| 16 | Bus | kendaraan |
+| 17 | Bench | kursi |
 | 18 | Traffic Cone | dibuang |
 | 19 | Fire hydrant | dibuang |
 | 20 | Traffic Barrel | dibuang |
@@ -67,7 +67,7 @@ Daftar 25 kelas dan pemetaan:
 - 10.000 gambar, 22 kelas rintangan outdoor untuk tunanetra.
 - Sumber utama kelas **tepian** (dari curb).
 - Pakai project `fpn/ood-pbnro` saja. **Jangan pakai salinannya "SOD" (lamao/sod-enect).**
-- - Halaman Universe hanya menampilkan 20 dari 22 nama kelas. Daftar lengkap dari `data.yaml` (urutan ID 0-21): bench, bicycle, bus, bus_stop, car, crutch, curb, dog, fire_hydrant, motorcycle, person, pole, spherical_roadblock, stairs, stop_sign, street_light, traffic_light, train, tree, truck, warning_column, waste_container. Dua kelas yang tidak tampil di halaman: `warning_column` dan `waste_container`. Di `data.yaml` tertulis `crutch`, di halaman tertulis `cane` (kemungkinan kelas yang sama, belum dicek di gambar).
+- Halaman Universe hanya menampilkan 20 dari 22 nama kelas. Daftar lengkap dari `data.yaml` (urutan ID 0-21): bench, bicycle, bus, bus_stop, car, crutch, curb, dog, fire_hydrant, motorcycle, person, pole, spherical_roadblock, stairs, stop_sign, street_light, traffic_light, train, tree, truck, warning_column, waste_container. Dua kelas yang tidak tampil di halaman: `warning_column` dan `waste_container`. Di `data.yaml` tertulis `crutch`, di halaman tertulis `cane` (kemungkinan kelas yang sama, belum dicek di gambar).
 
 Pemetaan 20 kelas yang terlihat:
 
@@ -75,19 +75,19 @@ Pemetaan 20 kelas yang terlihat:
 |-----------|---------------|
 | curb | tepian |
 | pole | pilar |
-| street_light | (usulan) pilar |
-| tree | pohon |
+| street_light | pilar (umumnya tiang penuh; foto malam kadang hanya kepala lampu) |
+| tree | dibuang, gambar yang memuat tree tidak dipakai (kotak OOD menutup seluruh pohon termasuk daun, tidak cocok dengan aturan batang saja di v1.3) |
 | person | orang |
 | car | kendaraan |
-| motorcycle | kendaraan |
-| bus, truck | (usulan) kendaraan |
-| bench | (usulan) kursi |
+| motorcycle, bicycle | kendaraan |
+| bus, truck | kendaraan |
+| bench | kursi (bangku taman utuh) |
 | stairs | tangga |
-| spherical_roadblock | (usulan) belum diputuskan, sama seperti bollard di Lingkungan Trotoar |
+| spherical_roadblock | pilar (sama seperti bollard) |
 | crutch | dibuang (kemungkinan sama dengan cane) |
 | waste_container | dibuang (tempat sampah tidak dilabel, sesuai aturan di kelas.md) |
-| warning_column | (usulan) belum diputuskan, mirip bollard dan spherical_roadblock, dicek di gambar |
-| bicycle, cane, dog, train, bus_stop, fire_hydrant, stop_sign, traffic_light | dibuang |
+| warning_column | pilar (sama seperti bollard) |
+| cane, dog, train, bus_stop, fire_hydrant, stop_sign, traffic_light | dibuang |
 
 ### 3. Unstructured Road Obstacle Detection (India)
 
@@ -124,9 +124,9 @@ Pemetaan 20 kelas yang terlihat:
 | ungu | motor | kendaraan |
 | merah | orang | orang |
 | pink muda | tiang lampu | pilar |
-| oranye | bollard, balok beton | (usulan) pilar atau dibuang |
+| oranye | bollard, balok beton | pilar |
 | toska | plang | dibuang |
-| kuning, biru tua, magenta | tempat sampah, pot, lainnya | [CEK] saat download |
+
 - Pemetaan nomor kelas (hasil cek gambar). Nama kelas di `data.yaml` rusak, jadi nomor dicocokkan lewat gambar berkotak dan lembar potongan per ID. Yang dipakai hanya ID 0-11 dan 21. ID 12-20 hanya 1 sampai 5 kotak, diabaikan. Warna di tabel atas itu warna tampilan Roboflow, jangan disamakan dengan nomor ID.
 
 | ID | Objek | Jumlah kotak | Kelas JalanKu |
@@ -135,15 +135,15 @@ Pemetaan 20 kelas yang terlihat:
 | 1 | motor | 2.843 | kendaraan |
 | 2 | orang | 3.835 | orang |
 | 3 | batang pohon | 2.445 | pohon |
-| 4 | pilar atau kolom bangunan (sebagian mungkin tembok) | 187 | (usulan) pilar |
+| 4 | pilar atau kolom bangunan (sebagian mungkin tembok) | 187 | pilar |
 | 5 | pot tanaman | 123 | tanaman_pot |
-| 6 | bollard dan balok beton | 2.464 | (usulan) pilar atau dibuang, belum diputuskan |
+| 6 | bollard dan balok beton | 2.464 | pilar |
 | 7 | kursi dan bangku | 938 | kursi |
 | 8 | tempat sampah | 441 | dibuang |
 | 9 | mobil | 3.765 | kendaraan |
 | 10 | lampu lalu lintas | 48 | dibuang |
 | 11 | marka zebra cross | 44 | dibuang |
-| 21 | tiang (lampu, listrik, rambu) | 1.770 | (usulan) pilar |
+| 21 | tiang (lampu, listrik, rambu) | 1.770 | pilar |
 
 ### 5. Sidewalk Segment (lemnix)
 
@@ -222,8 +222,22 @@ Juga tidak bisa dipakai: ITOD Indonesian Traffic Obstacle Dataset (kamera mobil)
 - Lingkungan Trotoar ID 12-20 diabaikan (1-5 kotak per ID, total 20 kotak).
 - ROD `Bike` (ID 0) tidak dipetakan utuh ke satu kelas: sepeda dan motor perlu dipisahkan dulu sebelum dipakai.
 
-### Belum pasti
+### Belum pasti (semua sudah diputuskan, lihat bagian status di bawah)
 - Nasib Lingkungan Trotoar ID 6 (`pilar` atau dibuang).
 - Apakah ID 4 dan ID 21 layak digabung dalam satu kelas `pilar`.
 - Perlakuan sepeda di ROD ID 0 terhadap daftar kelas JalanKu (masuk `kendaraan`, kelas sendiri, atau dibuang) dan cara memisahkan motornya.
 - Nama kelas di `data.yaml` Lingkungan Trotoar rusak (teks README Roboflow), jadi semua pemetaan ID berasal dari pembacaan visual, bukan nama resmi.
+
+### Status setelah kelas v1.3 (7 November 2026)
+
+Keputusan di `docs/kelas.md` v1.3 menyelesaikan sebagian poin di atas:
+- Sepeda masuk `kendaraan`, jadi ROD `Bike` (ID 0) dan OOD `bicycle` langsung dipetakan ke `kendaraan` tanpa perlu memisahkan motor dan sepeda.
+- Bench (ROD dan OOD) masuk `kursi`, street_light OOD masuk `pilar`.
+- Pohon tetap batang saja. Unstructured Road dan Lingkungan Trotoar ID 3 melabel batang saja, jadi bisa dipakai. OOD `tree` menutup seluruh pohon, jadi gambar OOD yang memuat pohon dibuang saat penggabungan.
+- Unstructured Road kemungkinan hanya melabel satu objek per gambar (kendaraan parkir yang terlihat kadang tidak dilabel). Risiko label bolong, dicek saat penggabungan.
+
+Keputusan tambahan (7 November 2026):
+- Truck dan Bus (ROD ID 15-16, OOD bus dan truck) masuk `kendaraan`.
+- Bollard dan balok beton (Lingkungan Trotoar ID 6) serta OOD spherical_roadblock dan warning_column masuk `pilar`.
+- Lingkungan Trotoar ID 21 (tiang lampu, listrik, rambu) masuk `pilar`. Dari 38 kotak sampel, hampir semuanya tiang tipis.
+- Lingkungan Trotoar ID 4 (kolom bangunan) masuk `pilar`. Dari 44 kotak sampel, sekitar 28 kolom yang jelas, sekitar 11 hanya pinggiran tembok atau kusen pintu, dan sekitar 5 salah objek. Tetap dipakai karena jumlahnya kecil (187 kotak), tapi ini sumber label kotor yang diketahui.
