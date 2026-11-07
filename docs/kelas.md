@@ -1,4 +1,4 @@
-# Daftar Kelas dan Panduan Anotasi (v1.3, 7 November 2026)
+# Daftar Kelas dan Panduan Anotasi (v1.4, 7 November 2026)
 
 Status: dipakai untuk pilot ngelabel. Masih bisa direvisi setelah pilot.
 
@@ -6,13 +6,13 @@ Status: dipakai untuk pilot ngelabel. Masih bisa direvisi setelah pilot.
 
 | ID | Kelas | Yang dilabel |
 |---|---|---|
-| 0 | pilar | Tiang gedung, tiang lampu jalan, tiang rambu |
+| 0 | pilar | Tiang gedung, tiang lampu jalan, tiang rambu, bollard |
 | 1 | pohon | Hanya batang pohon yang tumbuh dari tanah |
 | 2 | tepian | Tepi trotoar, undakan tunggal, perbedaan tinggi lantai (bukan tangga) |
 | 3 | orang | Berdiri, berjalan, atau duduk (satu kelas) |
 | 4 | tanaman_pot | Pot dan tanamannya, satu objek |
 | 5 | kursi | Kursi dan bangku, termasuk bangku taman |
-| 6 | kendaraan | Motor, mobil, dan sepeda, terparkir maupun bergerak |
+| 6 | kendaraan | Motor, mobil, sepeda, truk, dan bus, terparkir maupun bergerak |
 | 7 | jalur_jalan | Permukaan untuk pejalan kaki, termasuk dalam gedung |
 | 8 | jalan_kendaraan | Jalan yang dipakai motor dan mobil |
 | 9 | tangga | Tangga naik atau turun dengan dua anak tangga atau lebih |
@@ -28,9 +28,9 @@ Status: dipakai untuk pilot ngelabel. Masih bisa direvisi setelah pilot.
 
 ## Aturan per kelas
 - **pohon:** batang saja dari pangkal ke atas sejauh terlihat, daun dan tajuk tidak ikut. Kalau batang sebagian tertutup daun, label bagian batang yang terlihat saja. Pohon dalam pot masuk tanaman_pot.
-- **pilar:** tiang lampu jalan dilabel utuh dari pangkal sampai kepala lampu.
+- **pilar:** tiang lampu jalan dilabel utuh dari pangkal sampai kepala lampu. Bollard (tonggak pendek di trotoar atau pintu masuk, termasuk yang bulat dan balok beton pendek) juga masuk pilar.
 - **tanaman_pot:** pot dan tanaman dalam satu kotak atau mask.
-- **kendaraan:** semua motor, mobil, dan sepeda, baik yang terparkir maupun yang sedang bergerak. Pengendaranya dilabel terpisah sebagai orang.
+- **kendaraan:** semua motor, mobil, sepeda, truk, dan bus, baik yang terparkir maupun yang sedang bergerak. Pengendaranya dilabel terpisah sebagai orang.
 - **orang:** semua postur masuk satu kelas. Orang yang hanya sebagian kecil terlihat (sementara: kurang dari sekitar sepertiga tubuh) dilewati.
 - **jalur_jalan:** permukaan yang diperuntukkan pejalan kaki: lantai lobi dan koridor, selasar, trotoar, jalur paving. Rumput, parkiran dengan kendaraan, dan area tertutup objek tidak masuk.
 - **jalan_kendaraan:** jalan yang dipakai motor dan mobil. Kalau ragu permukaannya untuk pejalan kaki atau kendaraan, dan kendaraan memakainya, label jalan_kendaraan.
@@ -42,6 +42,7 @@ Status: dipakai untuk pilot ngelabel. Masih bisa direvisi setelah pilot.
 - Tepian dan tangga turun sulit dideteksi dari satu kamera; akurasinya tidak dijanjikan.
 
 ## Riwayat perubahan
+- v1.4 (7 Nov 2026): bollard masuk pilar, truk dan bus masuk kendaraan, mengikuti pemetaan dataset publik. ID 0 sampai 9 tidak berubah.
 - v1.3 (7 Nov 2026): kendaraan mencakup yang bergerak (sebelumnya hanya terparkir) dan sepeda, mengikuti dataset publik. Pohon tetap batang saja, ditambah aturan batang tertutup daun. Bangku taman masuk kursi, tiang lampu jalan masuk pilar. Semua objek dilabel polygon. ID 0 sampai 9 tidak berubah.
 - v1.2 (1 Nov 2026): tambah kelas 9 tangga. Anak tangga dan tangga turun dipindah dari tepian ke tangga. ID 0 sampai 8 tidak berubah.
 - v1.1 (29 Okt 2026): 9 kelas awal.
