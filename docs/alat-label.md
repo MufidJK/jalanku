@@ -101,7 +101,9 @@ Dataset publik utama berformat kotak (ROD, OOD, Unstructured Road, Lingkungan Tr
 | Model | Kelas | Data |
 |---|---|---|
 | Kotak (deteksi) | pilar, pohon, tepian, orang, tanaman_pot, kursi, kendaraan, tangga | Kampus (polygon jadi kotak) + 4 dataset publik kotak |
-| Segmentasi | jalur_jalan, jalan_kendaraan | Kampus + lemnix (+ SANPO cadangan) |
+| Segmentasi | jalur_jalan, jalan_kendaraan, tangga | Kampus + lemnix (+ SANPO cadangan) |
+
+Mulai kelas v1.5 (8 November 2026), **tangga masuk dua model**: model kotak untuk peringatan jarak, model segmentasi untuk bentuk dan arah tangga. Menurut `docs/survei-dataset.md`, lemnix hanya dipakai untuk jalur_jalan dan taksonomi SANPO yang tercatat hanya road, curb, sidewalk, paved trail, jadi sumber data segmentasi tangga saat ini hanya kampus (frame `tangga-naik*` dan frame lain yang ada tangganya). Belum dicek apakah SANPO punya kelas tangga.
 
 Kelebihan: semua dataset publik terpakai, dan sesuai fungsi aplikasi (benda di depan + permukaan yang aman diinjak). Konsekuensi: dua model jalan bersamaan di HP, perlu optimasi saat tahap aplikasi.
 
