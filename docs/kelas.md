@@ -36,7 +36,7 @@ Status: dipakai untuk pilot ngelabel. Masih bisa direvisi setelah pilot.
 - **jalur_jalan:** permukaan yang diperuntukkan pejalan kaki: lantai lobi dan koridor, selasar, trotoar, jalur paving. Rumput, parkiran dengan kendaraan, dan area tertutup objek tidak masuk.
 - **jalan_kendaraan:** jalan yang dipakai motor dan mobil. Kalau ragu permukaannya untuk pejalan kaki atau kendaraan, dan kendaraan memakainya, label jalan_kendaraan.
 - **tepian:** satu undakan atau tepi yang tingginya berubah (tepi trotoar, satu anak tangga di pintu masuk). Dua anak tangga atau lebih masuk tangga.
-- **tangga:** satu kotak atau mask untuk seluruh bagian tangga yang terlihat, naik maupun turun. Pegangan tangga ikut di dalamnya, tidak dilabel terpisah. Eskalator tidak dilabel (sementara).
+- **tangga:** satu kotak atau mask untuk seluruh bagian tangga yang terlihat, naik maupun turun. Pegangan tangga ikut di dalamnya, tidak dilabel terpisah. Eskalator tidak dilabel (sementara), termasuk pelat landasannya.
 
 ## Aturan permukaan (jalur_jalan dan jalan_kendaraan)
 Dipakai kalau tidak jelas permukaan itu untuk pejalan kaki atau kendaraan. Putuskan per frame dari bukti yang terlihat, bukan dari nama lokasi.
@@ -49,6 +49,7 @@ Dipakai kalau tidak jelas permukaan itu untuk pejalan kaki atau kendaraan. Putus
 - **Masih ambigu:** pilih jalan_kendaraan (lebih aman untuk tunanetra) dan catat bahwa permukaannya ambigu supaya bisa dicek ulang.
 - Area parkir dengan kendaraan, termasuk lantai parkiran basement, adalah jalan_kendaraan.
 - Karpet, lantai lobi, dan koridor dalam gedung adalah jalur_jalan. Eskalator tidak masuk keduanya.
+- Pelat landasan eskalator (pelat logam bergerigi sebelum anak tangga eskalator) bukan jalur_jalan dan tidak dilabel. Lantai di sekitarnya tetap jalur_jalan.
 
 ## Keputusan kasus pilot
 Kasus yang muncul saat pilot dan sudah diputuskan (8 November 2026).
@@ -66,13 +67,14 @@ Kasus yang muncul saat pilot dan sudah diputuskan (8 November 2026).
 | Pohon jauh atau di balik pagar | dilabel hanya kalau batangnya jelas dan tidak terhalang pagar |
 | Stool dan kursi bar | kursi |
 | Tiang beton gerbang | pilar |
+| Pelat landasan eskalator | tidak dilabel, bukan jalur_jalan |
 
 ## Batasan yang diakui
 - Dahan rendah setinggi kepala kemungkinan tidak terdeteksi.
 - Tepian dan tangga turun sulit dideteksi dari satu kamera; akurasinya tidak dijanjikan.
 
 ## Riwayat perubahan
-- v1.5 (8 Nov 2026): tangga juga dipakai model segmentasi (kelas 7-9 untuk segmentasi). Aturan ukuran objek tipis (pilar, pohon, tepian): sisi terpanjang minimal 96 piksel dan sisi terpendek minimal 24 piksel. Tambah aturan permukaan berdasarkan bukti per frame dan keputusan 11 kasus pilot. ID 0 sampai 9 tidak berubah.
+- v1.5 (8 Nov 2026): tangga juga dipakai model segmentasi (kelas 7-9 untuk segmentasi). Aturan ukuran objek tipis (pilar, pohon, tepian): sisi terpanjang minimal 96 piksel dan sisi terpendek minimal 24 piksel. Tambah aturan permukaan berdasarkan bukti per frame dan keputusan 11 kasus pilot. Pelat landasan eskalator tidak dilabel dan bukan jalur_jalan. ID 0 sampai 9 tidak berubah.
 - v1.4 (7 Nov 2026): bollard masuk pilar, truk dan bus masuk kendaraan, mengikuti pemetaan dataset publik. ID 0 sampai 9 tidak berubah.
 - v1.3 (7 Nov 2026): kendaraan mencakup yang bergerak (sebelumnya hanya terparkir) dan sepeda, mengikuti dataset publik. Pohon tetap batang saja, ditambah aturan batang tertutup daun. Bangku taman masuk kursi, tiang lampu jalan masuk pilar. Semua objek dilabel polygon. ID 0 sampai 9 tidak berubah.
 - v1.2 (1 Nov 2026): tambah kelas 9 tangga. Anak tangga dan tangga turun dipindah dari tepian ke tangga. ID 0 sampai 8 tidak berubah.
