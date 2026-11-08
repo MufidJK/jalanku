@@ -1,4 +1,4 @@
-# Daftar Kelas dan Panduan Anotasi (v1.4, 7 November 2026)
+# Daftar Kelas dan Panduan Anotasi (v1.5, 8 November 2026)
 
 Status: dipakai untuk pilot ngelabel. Masih bisa direvisi setelah pilot.
 
@@ -18,10 +18,11 @@ Status: dipakai untuk pilot ngelabel. Masih bisa direvisi setelah pilot.
 | 9 | tangga | Tangga naik atau turun dengan dua anak tangga atau lebih |
 
 ## Aturan umum
-- Semua objek dilabel sebagai polygon dengan bantuan SAM (lihat `docs/alat-label.md`). Kelas 0-6 dan 9 dipakai model kotak (polygon diubah otomatis jadi kotak), kelas 7-8 dipakai model segmentasi.
+- Semua objek dilabel sebagai polygon dengan bantuan SAM (lihat `docs/alat-label.md`). Kelas 0-6 dan 9 dipakai model kotak (polygon diubah otomatis jadi kotak), kelas 7-9 dipakai model segmentasi. Jadi **tangga (9) masuk dua model**: model kotak untuk peringatan, model segmentasi untuk bentuknya.
 - Beri label hanya objek yang terlihat jelas. Bagian yang tertutup jangan ditebak.
 - Objek terpotong di tepi gambar tetap dilabel kalau bagian yang terlihat jelas.
-- Objek yang terlalu kecil dilewati (sementara: kurang dari sekitar 32 piksel pada sisi terpendek di gambar 640).
+- Objek yang terlalu kecil dilewati (sementara: kurang dari sekitar 32 piksel pada sisi terpendek di gambar 640; di frame 1080x1920 artinya 96 piksel).
+- **Objek tipis (pilar, pohon, tepian)** memakai aturan sendiri, karena tiang dan batang memang sempit: cukup sisi terpanjang minimal 96 piksel dan sisi terpendek minimal 24 piksel di frame 1080x1920 (di gambar 640: 32 dan 8 piksel).
 - Jangan melabel pantulan di kaca, gambar di poster, atau patung.
 - Rintangan di luar 10 kelas (tempat sampah, plang, tembok, pembatas) tidak dilabel, dan lantai di bawahnya tidak masuk jalur_jalan.
 - Ragu antara dua kelas: tulis di catatan dan tanya tim, jangan tebak.
@@ -37,11 +38,41 @@ Status: dipakai untuk pilot ngelabel. Masih bisa direvisi setelah pilot.
 - **tepian:** satu undakan atau tepi yang tingginya berubah (tepi trotoar, satu anak tangga di pintu masuk). Dua anak tangga atau lebih masuk tangga.
 - **tangga:** satu kotak atau mask untuk seluruh bagian tangga yang terlihat, naik maupun turun. Pegangan tangga ikut di dalamnya, tidak dilabel terpisah. Eskalator tidak dilabel (sementara).
 
+## Aturan permukaan (jalur_jalan dan jalan_kendaraan)
+Dipakai kalau tidak jelas permukaan itu untuk pejalan kaki atau kendaraan. Putuskan per frame dari bukti yang terlihat, bukan dari nama lokasi.
+
+- **jalan_kendaraan** kalau salah satu terpenuhi:
+  - ada kendaraan di permukaan itu,
+  - ada marka jalan (panah, garis lajur, zebra cross),
+  - permukaannya nyambung langsung ke jalan tanpa pembatas.
+- **jalur_jalan** kalau dipisah dari jalan oleh kerb, pagar, atau rumput, dan tidak ada tanda kendaraan.
+- **Masih ambigu:** pilih jalan_kendaraan (lebih aman untuk tunanetra) dan catat bahwa permukaannya ambigu supaya bisa dicek ulang.
+- Area parkir dengan kendaraan, termasuk lantai parkiran basement, adalah jalan_kendaraan.
+- Karpet, lantai lobi, dan koridor dalam gedung adalah jalur_jalan. Eskalator tidak masuk keduanya.
+
+## Keputusan kasus pilot
+Kasus yang muncul saat pilot dan sudah diputuskan (8 November 2026).
+
+| Kasus | Keputusan |
+|---|---|
+| Delineator oranye (tiang pembatas jalur) | pilar, sama seperti bollard |
+| Tiang stainless di atas umpak batu | pilar, umpaknya ikut |
+| Tembok planter rendah | bukan tepian, tidak dilabel |
+| Planter batu permanen | bukan tanaman_pot, tidak dilabel |
+| Pot kecil di rak | tidak dilabel, bukan rintangan di lantai |
+| Lantai di balik pagar kaca, beda level | tidak dilabel |
+| Batu pijakan di rumput | jalur_jalan |
+| Grating drainase di jalur | ikut permukaan di sekitarnya |
+| Pohon jauh atau di balik pagar | dilabel hanya kalau batangnya jelas dan tidak terhalang pagar |
+| Stool dan kursi bar | kursi |
+| Tiang beton gerbang | pilar |
+
 ## Batasan yang diakui
 - Dahan rendah setinggi kepala kemungkinan tidak terdeteksi.
 - Tepian dan tangga turun sulit dideteksi dari satu kamera; akurasinya tidak dijanjikan.
 
 ## Riwayat perubahan
+- v1.5 (8 Nov 2026): tangga juga dipakai model segmentasi (kelas 7-9 untuk segmentasi). Aturan ukuran objek tipis (pilar, pohon, tepian): sisi terpanjang minimal 96 piksel dan sisi terpendek minimal 24 piksel. Tambah aturan permukaan berdasarkan bukti per frame dan keputusan 11 kasus pilot. ID 0 sampai 9 tidak berubah.
 - v1.4 (7 Nov 2026): bollard masuk pilar, truk dan bus masuk kendaraan, mengikuti pemetaan dataset publik. ID 0 sampai 9 tidak berubah.
 - v1.3 (7 Nov 2026): kendaraan mencakup yang bergerak (sebelumnya hanya terparkir) dan sepeda, mengikuti dataset publik. Pohon tetap batang saja, ditambah aturan batang tertutup daun. Bangku taman masuk kursi, tiang lampu jalan masuk pilar. Semua objek dilabel polygon. ID 0 sampai 9 tidak berubah.
 - v1.2 (1 Nov 2026): tambah kelas 9 tangga. Anak tangga dan tangga turun dipindah dari tepian ke tangga. ID 0 sampai 8 tidak berubah.
