@@ -235,3 +235,8 @@ foto.*
 data/*
 !data/.gitkeep
 !data/README.md
+
+# Kredensial (jangan pernah di-commit)
+kaggle.json
+.kaggle/
+.env.*
