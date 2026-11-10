@@ -240,3 +240,6 @@ data/*
 kaggle.json
 .kaggle/
 .env.*
+
+
+.claude/settings.local.json
