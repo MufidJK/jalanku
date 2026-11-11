@@ -40,8 +40,8 @@ for f in src:
     for s in d["shapes"]:
         p = np.array(s["points"], float)
         # Data hasil review: shape tambahan/editan manual tidak punya description auto-v2, itu bukan error.
-        # Cukup cek polygon >= 3 titik dan label valid.
-        if s.get("shape_type") != "polygon" or len(p) < 3 or s["label"] not in kelas:
+        # Cukup cek polygon (atau rectangle, mulai audit label 11 Nov 2026: shape label-kurang boleh digambar sebagai kotak) >= 3 titik dan label valid.
+        if s.get("shape_type") not in ("polygon", "rectangle") or len(p) < 3 or s["label"] not in kelas:
             err.append(f"{f.name} shape buruk {s['label']}")
         elif p.min() < -1 or p[:, 0].max() > 1081 or p[:, 1].max() > 1921:
             err.append(f"{f.name} titik di luar gambar")

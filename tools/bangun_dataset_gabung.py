@@ -29,6 +29,10 @@ Aturan:
   - Tidak menimpa: kalau folder keluaran sudah berisi, berhenti. Pengecualian: --ganti-kotak menghapus HANYA
     data/dataset-gabung-kotak lalu membangunnya ulang; --hanya-kotak tidak menyentuh dataset-gabung-seg sama sekali.
 
+Opsi --akhiran=-v2 (nilai berawalan "-" harus ditulis dengan tanda sama dengan): masukan kampus dibaca dari data/dataset-kampus-{kotak,seg}<akhiran>, keluaran ditulis ke
+  data/dataset-gabung-{kotak,seg}<akhiran>, contact sheet COCO-fill ke folder keluaran (BUKAN ke data/publik). Folder
+  data/dataset-gabung-* lama tidak disentuh; menolak jalan kalau folder keluaran sudah berisi.
+
 Contoh:
   python tools/bangun_dataset_gabung.py --dry-run --skip-nested 0.8 --skip-lintas-iou 0.5
   python tools/bangun_dataset_gabung.py --skip-nested 0.8 --skip-lintas-iou 0.5 --hanya-kotak --ganti-kotak
@@ -242,8 +246,8 @@ def sheet_akhir(nama="rod", n=20, seed=20261110, kolom=5, sisi=384):
         dp = sum(1 for r in per[k] if r["status"] == "dipakai")
         nc = sum(1 for r in per[k] if r["status"] == "dipakai" and r["source"] == "coco_fill")
         d0.text((x + 4, y + 2), f"{k[:20]} dipakai={dp} coco={nc}", fill="black", font=font)
-    out = PUBLIK / nama / "sheet_coco_fill.jpg"
-    if out.exists():
+    out = (OUT_KOTAK / "sheet_coco_fill.jpg") if OUT_KOTAK.name != "dataset-gabung-kotak" else (PUBLIK / nama / "sheet_coco_fill.jpg")
+    if out.exists() and out.parent != OUT_KOTAK:
         cad = PUBLIK / nama / "sheet_coco_fill_sebelum_ketat.jpg"
         if not cad.exists():
             out.rename(cad)  # simpan versi lama, tidak menimpa
@@ -262,7 +266,16 @@ def main():
     ap.add_argument("--hanya-kotak", action="store_true", help="jangan menyentuh dataset-gabung-seg")
     ap.add_argument("--ganti-kotak", action="store_true", help="hapus data/dataset-gabung-kotak lalu bangun ulang")
     ap.add_argument("--dry-run", action="store_true", help="hanya cetak tabel, tidak menulis apa pun")
+    ap.add_argument("--akhiran", default="", help="akhiran versi dataset, mis. -v2 (masukan kampus dan keluaran gabung memakai akhiran ini)")
     a = ap.parse_args()
+    global KAMPUS_KOTAK, KAMPUS_SEG, OUT_KOTAK, OUT_SEG
+    if a.akhiran:
+        KAMPUS_KOTAK = ROOT / "data" / f"dataset-kampus-kotak{a.akhiran}"
+        KAMPUS_SEG = ROOT / "data" / f"dataset-kampus-seg{a.akhiran}"
+        OUT_KOTAK = ROOT / "data" / f"dataset-gabung-kotak{a.akhiran}"
+        OUT_SEG = ROOT / "data" / f"dataset-gabung-seg{a.akhiran}"
+        if a.ganti_kotak:
+            raise SystemExit("BERHENTI: --ganti-kotak tidak boleh dengan --akhiran")
     caps = dict(CAP_DEFAULT)
     for c in a.cap:
         k, v = c.split("=")

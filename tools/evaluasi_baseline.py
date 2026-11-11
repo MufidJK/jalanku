@@ -15,6 +15,12 @@ Catatan metrik: P, R, F1 adalah nilai pada conf yang memaksimalkan F1 rata-rata 
 mAP dihitung pada conf 0.001. Analisis galat dan contact sheet memakai conf 0.25 dan IoU 0.5.
 Kecepatan adalah kecepatan LAPTOP ini (fp32), bukan kecepatan HP.
 
+Opsi --versi-data=-v2 atau --versi-data=-v2-noR4 (pakai tanda sama dengan): evaluasi bobot YANG SAMA pada val versi data lain (setelah audit label kampus).
+  Folder keluaran default menjadi runs/baseline/eval<versi>/ ... lebih aman beri --out sendiri (mis. runs/baseline/eval-v2/v2).
+  kotak-gabung dievaluasi pada val dataset-gabung-kotak<versi> (val = kampus val); kalau folder itu tidak ada (mis. -v2-noR4,
+  yang hanya membangun dataset kampus) dipakai dataset-kampus-kotak<versi>, yang val-nya identik menurut konstruksi.
+  seg-kampus tidak dievaluasi ulang untuk versi baru (label seg tidak berubah; lihat docs/hasil-audit.md).
+
 Contoh:
   python tools/evaluasi_baseline.py                       # semua run, semua langkah
   python tools/evaluasi_baseline.py --run kotak-gabung --aksi val
@@ -456,10 +462,27 @@ def main():
     ap.add_argument("--aksi", choices=["val", "galat", "kecepatan", "cm025", "semua"], default="semua")
     ap.add_argument("--out", default=str(BASE / "eval"), help="folder keluaran (tidak boleh sudah ada isinya yang sama)")
     ap.add_argument("--bobot-dir", help="ganti sumber weights (uji coba): <dir>/<run>/weights/best.pt")
+    ap.add_argument("--versi-data", default="", help="akhiran versi dataset, mis. -v2 atau -v2-noR4 (default: kosong = data lama)")
     args = ap.parse_args()
+    if args.versi_data:
+        if args.run is None:
+            args.run = [r for r in sorted(RUNS) if RUNS[r][0] == "detect"]
+        for r in list(RUNS):
+            tugas, yp = RUNS[r]
+            if tugas != "detect":
+                continue
+            yp2 = Path(str(yp).replace("dataset-gabung-kotak", f"dataset-gabung-kotak{args.versi_data}")
+                       .replace("dataset-kampus-kotak", f"dataset-kampus-kotak{args.versi_data}"))
+            if not yp2.exists() and "gabung" in str(yp2):
+                yp2 = Path(str(yp2).replace(f"dataset-gabung-kotak{args.versi_data}", f"dataset-kampus-kotak{args.versi_data}"))
+            if not yp2.exists():
+                sys.exit(f"Tidak ada: {yp2}")
+            RUNS[r] = (tugas, yp2)
+        if args.run and any(RUNS[r][0] != "detect" for r in args.run):
+            sys.exit("--versi-data hanya untuk run kotak (detect)")
 
     runs = args.run or sorted(RUNS)
-    out = Path(args.out)
+    out = Path(args.out).resolve()  # harus absolut: Ultralytics menafsirkan project relatif di bawah runs/detect
     out.mkdir(parents=True, exist_ok=True)
     bobot = {r: Path(args.bobot_dir or BASE) / r / "weights" / "best.pt" for r in runs}
     for r, b in bobot.items():
