@@ -1,4 +1,4 @@
-# Daftar Kelas dan Panduan Anotasi (v1.5, 8 November 2026)
+# Daftar Kelas dan Panduan Anotasi (v1.6, 11 November 2026)
 
 Status: dipakai untuk pilot ngelabel. Masih bisa direvisi setelah pilot.
 
@@ -6,7 +6,7 @@ Status: dipakai untuk pilot ngelabel. Masih bisa direvisi setelah pilot.
 
 | ID | Kelas | Yang dilabel |
 |---|---|---|
-| 0 | pilar | Tiang gedung, tiang lampu jalan, tiang rambu, bollard |
+| 0 | pilar | Tiang gedung, tiang lampu jalan, tiang rambu, bollard, kerucut lalu lintas. Bukan sirip, kosen, atau bagian dinding (lihat R1) |
 | 1 | pohon | Hanya batang pohon yang tumbuh dari tanah |
 | 2 | tepian | Tepi trotoar, undakan tunggal, perbedaan tinggi lantai (bukan tangga) |
 | 3 | orang | Berdiri, berjalan, atau duduk (satu kelas) |
@@ -26,6 +26,7 @@ Status: dipakai untuk pilot ngelabel. Masih bisa direvisi setelah pilot.
 - Jangan melabel pantulan di kaca, gambar di poster, atau patung.
 - Rintangan di luar 10 kelas (tempat sampah, plang, tembok, pembatas) tidak dilabel, dan lantai di bawahnya tidak masuk jalur_jalan.
 - Ragu antara dua kelas: tulis di catatan dan tanya tim, jangan tebak.
+- Aturan audit R1 sampai R7 (v1.6) ada di bagian "Aturan audit label" di bawah.
 
 ## Aturan per kelas
 - **pohon:** batang saja dari pangkal ke atas sejauh terlihat, daun dan tajuk tidak ikut. Kalau batang sebagian tertutup daun, label bagian batang yang terlihat saja. Pohon dalam pot masuk tanaman_pot.
@@ -37,6 +38,17 @@ Status: dipakai untuk pilot ngelabel. Masih bisa direvisi setelah pilot.
 - **jalan_kendaraan:** jalan yang dipakai motor dan mobil. Kalau ragu permukaannya untuk pejalan kaki atau kendaraan, dan kendaraan memakainya, label jalan_kendaraan.
 - **tepian:** satu undakan atau tepi yang tingginya berubah (tepi trotoar, satu anak tangga di pintu masuk). Dua anak tangga atau lebih masuk tangga.
 - **tangga:** satu kotak atau mask untuk seluruh bagian tangga yang terlihat, naik maupun turun. Pegangan tangga ikut di dalamnya, tidak dilabel terpisah. Eskalator tidak dilabel (sementara), termasuk pelat landasannya.
+
+## Aturan audit label (v1.6, hasil audit label kampus 10-11 November 2026)
+Dipakai untuk melabel dan memeriksa ulang label. Nomor aturan dipakai di `data/audit-kampus/` dan `docs/hasil-audit.md`.
+
+- **R1. Bagian dinding bukan pilar, apa pun bahannya.** Sirip, mullion, kosen, bingkai, kusen/jamb pintu dan jendela, serta bagian fasad, dinding, dan pagar balustrade (kaca, logam, batu) adalah bagian dari dinding, bukan tiang bebas, dan tidak dilabel. Kolom atau tiang yang berdiri bebas di depan atau di samping dinding kaca tetap pilar (termasuk tiang beton gerbang).
+- **R2. Orang di balik kaca bukan orang.** Orang yang terlihat lewat jendela atau dinding kaca di ruang yang tidak bisa dimasuki langsung oleh pengguna bukan rintangan dan tidak dilabel. Orang di sisi pengguna, atau di ambang pintu yang terbuka, tetap orang. **Pemutus:** kalau ragu apakah orang itu di balik kaca, tetap dilabel orang.
+- **R3. Pot kecil di rak tidak dilabel.** tanaman_pot hanya untuk pot atau buket yang berdiri di lantai atau tanah di ruang jalan.
+- **R4. Ambang ukuran** (frame 1080x1920): kelas biasa sisi terpendek minimal 96 px; kelas tipis (pilar, pohon, tepian) sisi terpanjang minimal 96 px dan sisi terpendek minimal 24 px. Kotak di bawah ambang tidak masuk label.
+- **R5.** Tidak melabel pantulan, poster, mural, atau patung. Eskalator dan pelat landasannya tidak dilabel.
+- **R6. Satu objek satu kotak.** Kotak ganda atau kotak parsial pada objek yang sudah punya kotak penuh dihapus. Satu objek tidak boleh punya dua kelas.
+- **R7. Di luar kelas, tidak dilabel:** badan gerbang putar (turnstile) dan badan portal, lengan palang horizontal, kaki meja, lampu langit-langit, kabinet listrik, dan penyangga atau patok pohon. Tiang vertikal portal yang berdiri bebas tetap pilar.
 
 ## Aturan permukaan (jalur_jalan dan jalan_kendaraan)
 Dipakai kalau tidak jelas permukaan itu untuk pejalan kaki atau kendaraan. Putuskan per frame dari bukti yang terlihat, bukan dari nama lokasi.
@@ -69,11 +81,28 @@ Kasus yang muncul saat pilot dan sudah diputuskan (8 November 2026).
 | Tiang beton gerbang | pilar |
 | Pelat landasan eskalator | tidak dilabel, bukan jalur_jalan |
 
+Kasus tambahan dari audit label (11 November 2026):
+
+| Kasus | Keputusan |
+|---|---|
+| Sirip, mullion, kosen, kusen pintu, ujung dinding, tiang pagar balustrade (kaca, logam, batu) | bukan pilar, tidak dilabel (R1) |
+| Kolom bebas di depan atau samping dinding kaca | pilar (R1) |
+| Orang di balik dinding kaca, di ruang yang tidak bisa dimasuki | tidak dilabel (R2); kalau ragu, tetap orang |
+| Pot atau buket kecil di rak | tidak dilabel (R3) |
+| Buket atau pot di lantai ruang jalan | tanaman_pot, dilabel |
+| Kerucut lalu lintas | pilar, sama seperti delineator dan bollard |
+| Gerbang putar (turnstile), badan portal, lengan palang | tidak dilabel (R7) |
+| Tiang vertikal portal yang berdiri bebas | pilar |
+| Kaki meja, lampu neon langit-langit, kabinet listrik, penyangga pohon | tidak dilabel (R7) |
+| Kotak ganda atau parsial pada objek yang sudah punya kotak penuh | dihapus (R6) |
+| Pantulan di lantai, mural, gambar di dinding | tidak dilabel (R5) |
+
 ## Batasan yang diakui
 - Dahan rendah setinggi kepala kemungkinan tidak terdeteksi.
 - Tepian dan tangga turun sulit dideteksi dari satu kamera; akurasinya tidak dijanjikan.
 
 ## Riwayat perubahan
+- v1.6 (11 Nov 2026): hasil audit label kampus. Tambah bagian "Aturan audit label" (R1-R7). R1 diperluas: sirip, kosen, kusen pintu, dan bagian dinding/fasad/balustrade bukan pilar, apa pun bahannya; kolom bebas tetap pilar. R2 baru: orang di balik kaca tidak dilabel, dengan pemutus ragu = tetap orang. R3-R5 (pot di rak, ambang ukuran, pantulan/poster/eskalator) ditegakkan di label. R6 baru: satu objek satu kotak. R7 baru: objek di luar kelas (turnstile, kaki meja, lampu langit-langit, kabinet listrik, penyangga pohon). Kerucut lalu lintas masuk pilar. ID 0 sampai 9 tidak berubah.
 - v1.5 (8 Nov 2026): tangga juga dipakai model segmentasi (kelas 7-9 untuk segmentasi). Aturan ukuran objek tipis (pilar, pohon, tepian): sisi terpanjang minimal 96 piksel dan sisi terpendek minimal 24 piksel. Tambah aturan permukaan berdasarkan bukti per frame dan keputusan 11 kasus pilot. Pelat landasan eskalator tidak dilabel dan bukan jalur_jalan. ID 0 sampai 9 tidak berubah.
 - v1.4 (7 Nov 2026): bollard masuk pilar, truk dan bus masuk kendaraan, mengikuti pemetaan dataset publik. ID 0 sampai 9 tidak berubah.
 - v1.3 (7 Nov 2026): kendaraan mencakup yang bergerak (sebelumnya hanya terparkir) dan sepeda, mengikuti dataset publik. Pohon tetap batang saja, ditambah aturan batang tertutup daun. Bangku taman masuk kursi, tiang lampu jalan masuk pilar. Semua objek dilabel polygon. ID 0 sampai 9 tidak berubah.

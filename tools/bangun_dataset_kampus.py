@@ -2,6 +2,12 @@
 
 Dijalankan dari root repo: python tools/bangun_dataset_kampus.py
 
+Opsi (default = perilaku lama, tidak berubah):
+  --akhiran=-v2      tulis ke data/dataset-kampus-seg-v2 dan data/dataset-kampus-kotak-v2 (versi baru, dipakai setelah audit
+                       label 11 Nov 2026). Dengan akhiran, menolak jalan kalau folder keluaran sudah berisi file.
+  --json-akar DIR      baca JSON dari DIR/pilot-v2 dan DIR/pilot-v2-blind (default: data/pilot-v2 dan data/pilot-v2-blind);
+                       dipakai untuk membangun varian "v2-noR4" dari data/audit-kampus/sumber-noR4.
+
 Sumber label (Keputusan Checkpoint 4):
   - 15 frame blind : data/pilot-v2-blind/*.json (ground truth bebas bias)
   - 234 frame lain : data/pilot-v2/*.json (hasil review manusia)
@@ -17,6 +23,7 @@ Aturan:
     * Kotak = bounding box dari titik polygon.
     * Semua shape tangga dalam satu frame digabung jadi satu objek kotak per frame.
 """
+import argparse
 import csv
 import json
 import os
@@ -60,6 +67,21 @@ def tulis_yaml(out_dir: Path, kelas: list[str]):
 
 
 def main():
+    global OUT_SEG, OUT_KOTAK
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--akhiran", default="", help="akhiran nama folder keluaran, mis. -v2 (default: kosong = data/dataset-kampus-*)")
+    ap.add_argument("--json-akar", default=None, help="akar JSON pengganti (berisi pilot-v2/ dan pilot-v2-blind/)")
+    a = ap.parse_args()
+    review_dir = Path(a.json_akar) / "pilot-v2" if a.json_akar else REVIEW
+    blind_json_dir = Path(a.json_akar) / "pilot-v2-blind" if a.json_akar else BLIND
+    if a.akhiran:
+        OUT_SEG = Path(f"data/dataset-kampus-seg{a.akhiran}")
+        OUT_KOTAK = Path(f"data/dataset-kampus-kotak{a.akhiran}")
+        for d in (OUT_SEG, OUT_KOTAK):
+            if d.exists() and any(d.rglob("*")):
+                raise SystemExit(f"BERHENTI: {d} sudah berisi file; tidak ditimpa.")
+    elif a.json_akar:
+        raise SystemExit("BERHENTI: --json-akar wajib dipakai bersama --akhiran (jangan menimpa dataset lama).")
     imgs = sorted(PILOT_IMG.glob("*.jpg"))
     assert len(imgs) == 249, f"Jumlah gambar pilot harus 249, ditemukan {len(imgs)}"
     if any(p.name.startswith(TEST) for p in imgs):
@@ -91,7 +113,7 @@ def main():
         if lokasi.startswith(TEST):
             raise RuntimeError(f"BERHENTI: lokasi test {lokasi}")
         split = "val" if lokasi in LOKASI_VAL else "train"
-        sumber_dir = BLIND if stem in blind_stems else REVIEW
+        sumber_dir = blind_json_dir if stem in blind_stems else review_dir
         sumber_nama = "blind" if stem in blind_stems else "review"
         js_path = sumber_dir / f"{stem}.json"
         if not js_path.exists():
