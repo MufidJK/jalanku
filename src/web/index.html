@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JalanKu</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <video id="kamera" playsinline muted></video>
+  <canvas id="overlay"></canvas>
+  <div id="vignette"></div>
+
+  <div id="layar-awal">
+    <h1>JalanKu</h1>
+    <p>Pendamping jalan kaki yang mendeteksi rintangan di depan.</p>
+  </div>
+
+  <div id="atas">
+    <div id="status" aria-live="polite">
+      <div class="baris">
+        <span id="status-ikon" aria-hidden="true"></span>
+        <span id="status-teks">Tekan Mulai.</span>
+      </div>
+      <div id="status-detail" hidden></div>
+    </div>
+    <div id="zona" aria-hidden="true">
+      <div data-z="kiri">KIRI</div>
+      <div data-z="tengah">TENGAH</div>
+      <div data-z="kanan">KANAN</div>
+    </div>
+    <div id="info"></div>
+  </div>
+
+  <canvas id="kanvas" hidden></canvas>
+
+  <div id="panel" hidden>
+    <label>Jeda kirim gambar: <span id="nilai-kirim">200</span> ms
+      <input type="range" id="atur-kirim" min="100" max="1000" step="50" value="200">
+    </label>
+    <label>Jeda ulang suara: <span id="nilai-ulang">4</span> detik
+      <input type="range" id="atur-ulang" min="2" max="10" step="1" value="4">
+    </label>
+    <label>Kecepatan bicara: <span id="nilai-rate">1.0</span>
+      <input type="range" id="atur-rate" min="0.5" max="2" step="0.1" value="1">
+    </label>
+    <label>Volume: <span id="nilai-volume">100</span>%
+      <input type="range" id="atur-volume" min="0" max="100" step="10" value="100">
+    </label>
+  </div>
+
+  <div id="baris-kecil">
+    <button id="tombol-bisu" aria-pressed="false">Bisu</button>
+    <button id="tombol-atur" aria-expanded="false">Atur</button>
+  </div>
+  <button id="tombol-mulai">Mulai</button>
+
+  <script src="mock.js"></script>
+  <script src="suara.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
