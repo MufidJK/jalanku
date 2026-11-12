@@ -1,4 +1,4 @@
-# Daftar Kelas dan Panduan Anotasi (v1.6, 11 November 2026)
+# Daftar Kelas dan Panduan Anotasi (v1.7, 11 November 2026)
 
 Status: dipakai untuk pilot ngelabel. Masih bisa direvisi setelah pilot.
 
@@ -48,7 +48,7 @@ Dipakai untuk melabel dan memeriksa ulang label. Nomor aturan dipakai di `data/a
 - **R4. Ambang ukuran** (frame 1080x1920): kelas biasa sisi terpendek minimal 96 px; kelas tipis (pilar, pohon, tepian) sisi terpanjang minimal 96 px dan sisi terpendek minimal 24 px. Kotak di bawah ambang tidak masuk label.
 - **R5.** Tidak melabel pantulan, poster, mural, atau patung. Eskalator dan pelat landasannya tidak dilabel.
 - **R6. Satu objek satu kotak.** Kotak ganda atau kotak parsial pada objek yang sudah punya kotak penuh dihapus. Satu objek tidak boleh punya dua kelas.
-- **R7. Di luar kelas, tidak dilabel:** badan gerbang putar (turnstile) dan badan portal, lengan palang horizontal, kaki meja, lampu langit-langit, kabinet listrik, dan penyangga atau patok pohon. Tiang vertikal portal yang berdiri bebas tetap pilar.
+- **R7. Di luar kelas, tidak dilabel:** badan gerbang putar (turnstile) dan badan portal, lengan palang horizontal, kaki meja, lampu langit-langit, kabinet listrik, penyangga atau patok pohon, serta gagang pintu dan kusen pintu (v1.7). Tiang vertikal portal yang berdiri bebas tetap pilar.
 
 ## Aturan permukaan (jalur_jalan dan jalan_kendaraan)
 Dipakai kalau tidak jelas permukaan itu untuk pejalan kaki atau kendaraan. Putuskan per frame dari bukti yang terlihat, bukan dari nama lokasi.
@@ -97,11 +97,23 @@ Kasus tambahan dari audit label (11 November 2026):
 | Kotak ganda atau parsial pada objek yang sudah punya kotak penuh | dihapus (R6) |
 | Pantulan di lantai, mural, gambar di dinding | tidak dilabel (R5) |
 
+Kasus tambahan dari review test set (11 November 2026, v1.7):
+
+| Kasus | Keputusan |
+|---|---|
+| Ambang rendah sepanjang jendela (setinggi sekitar satu langkah) | tepian |
+| Pohon yang ditanam di pot atau di bedeng planter bulat yang ditinggikan | tanaman_pot (pot dan pohon satu objek); dasar bedeng planter bukan tepian. Ini memperjelas "Planter batu permanen" di atas: yang berisi pohon dan berdiri di ruang jalan dilabel tanaman_pot, bukan lagi dilewati |
+| Bangku beton atau kayu | kursi |
+| Gagang pintu dan kusen pintu | tidak dilabel (R7, juga R1 untuk kusen) |
+| Kerb antara jalur pejalan kaki dan jalan yang lebih tinggi atau lebih rendah | tepian |
+| Orang terpotong tepi frame | dilabel kalau bagian yang terlihat jelas; aturan ukuran tetap berlaku (R4 dan sepertiga tubuh) |
+
 ## Batasan yang diakui
 - Dahan rendah setinggi kepala kemungkinan tidak terdeteksi.
 - Tepian dan tangga turun sulit dideteksi dari satu kamera; akurasinya tidak dijanjikan.
 
 ## Riwayat perubahan
+- v1.7 (11 Nov 2026): keputusan review test set. Ambang rendah sepanjang jendela = tepian; pohon di pot atau bedeng planter bulat yang ditinggikan = tanaman_pot (pot dan pohon satu objek, dasar bedeng bukan tepian); bangku beton atau kayu = kursi; gagang pintu dan kusen pintu tidak dilabel (R7); kerb antara jalur pejalan kaki dan jalan yang beda tinggi = tepian; orang terpotong tepi frame dilabel kalau terlihat jelas (aturan ukuran tetap). ID 0 sampai 9 tidak berubah.
 - v1.6 (11 Nov 2026): hasil audit label kampus. Tambah bagian "Aturan audit label" (R1-R7). R1 diperluas: sirip, kosen, kusen pintu, dan bagian dinding/fasad/balustrade bukan pilar, apa pun bahannya; kolom bebas tetap pilar. R2 baru: orang di balik kaca tidak dilabel, dengan pemutus ragu = tetap orang. R3-R5 (pot di rak, ambang ukuran, pantulan/poster/eskalator) ditegakkan di label. R6 baru: satu objek satu kotak. R7 baru: objek di luar kelas (turnstile, kaki meja, lampu langit-langit, kabinet listrik, penyangga pohon). Kerucut lalu lintas masuk pilar. ID 0 sampai 9 tidak berubah.
 - v1.5 (8 Nov 2026): tangga juga dipakai model segmentasi (kelas 7-9 untuk segmentasi). Aturan ukuran objek tipis (pilar, pohon, tepian): sisi terpanjang minimal 96 piksel dan sisi terpendek minimal 24 piksel. Tambah aturan permukaan berdasarkan bukti per frame dan keputusan 11 kasus pilot. Pelat landasan eskalator tidak dilabel dan bukan jalur_jalan. ID 0 sampai 9 tidak berubah.
 - v1.4 (7 Nov 2026): bollard masuk pilar, truk dan bus masuk kendaraan, mengikuti pemetaan dataset publik. ID 0 sampai 9 tidak berubah.

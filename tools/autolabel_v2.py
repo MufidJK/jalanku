@@ -59,7 +59,7 @@ M_SAM = "facebook/sam2.1-hiera-base-plus"
 LOKASI_SEMUA_JALAN = ("parkiran-motor-b1",)
 LOKASI_CAMPURAN = ("dapsut", "samping-ubm", "jalanan-ubm")
 LOKASI_TANGGA = ("tangga-naik",)
-LOKASI_LUAR = ("dapsut", "samping-ubm", "jalanan-ubm", "halaman-ubm")
+LOKASI_LUAR = ("dapsut", "samping-ubm", "jalanan-ubm", "halaman-ubm") + ("taman-ubm",)   # taman-ubm: lokasi test (Stage 6), tidak ada di training
 
 PROMPT = {
     "pilar": "pillar. column. pole. lamp post. bollard.",
