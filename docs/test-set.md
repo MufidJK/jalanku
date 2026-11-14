@@ -82,12 +82,30 @@ Ringkasan: auto menangkap sebagian besar objek (recall 0,84 sampai 1,0 untuk pil
 - Flag `perlu_cek` dari auto masih ada di banyak JSON (tidak dibersihkan); tidak mempengaruhi dataset.
 - Auto-label dijalankan dengan pipeline untuk aturan v1.6, review manual memakai v1.7 (lihat di atas).
 
+## Kebocoran lokasi taman-ubm ke data latih (ditemukan 14 November 2026)
+Saat review ronde 2, Jeka menemukan frame latih yang memperlihatkan area taman-ubm. Frame test sendiri tidak pernah masuk data latih, tetapi **tempat yang sama** terekam di video lokasi lain. Dicek ulang dengan embedding generik (ResNet50 ImageNet, bukan model kita; `tools/ronde2_cek_bocor.py`, hasil `data/ronde2/bocor/`) terhadap 195 frame train v2 dan semua frame ronde 2. Kontrol positif (frame yang ditemukan Jeka) ada di peringkat 7 dari 265.
+
+Frame yang dikeluarkan (daftar lengkap: `data/ronde2/bocor/dikeluarkan.csv`, dipakai sebagai daftar pengecualian oleh `tools/bangun_dataset_ronde2.py`):
+
+| Frame | Asal | Alasan |
+|---|---|---|
+| tangga-naik-alfa-lt2 dada t=0, 4, 8, 15 s; mata t=2, 3, 7, 11 s (8 frame) | train v2 (baseline) | awal video direkam di depan Maxx Coffee, area yang sama dengan taman-ubm (pilar marmer, lantai, kafe) |
+| jalanan-ubm mata t=6, 18 s; dada t=87, 102 s (4 frame) | train v2 (baseline) | kemungkinan plaza drop-off yang sama (kanopi, deretan pot putih) |
+| lorong-lt3-eskalator-alfa-tower mata t=210 s | ronde 2 | taman-ubm terlihat lewat kaca (temuan review) |
+| jalanan-ubm dada t=97 s; mata t=3, 12 s | ronde 2 | kemungkinan plaza drop-off yang sama |
+
+Dampak:
+- **Baseline lama (`models/baseline/*`) dilatih dengan 12 frame bocor itu**, dan di `dataset-gabung-kotak(-v2)` setiap frame kampus di-oversample x4, jadi 48 dari 3.080 gambar latih model kotak (1,6%) berasal dari frame bocor. Model seg baseline (kampus saja, tanpa oversample) memuat 12 dari 195 frame latih. Baseline **tidak dilatih ulang** (keputusan Jeka).
+- Akibatnya pada perbandingan test final, angka **baseline di taman-ubm kemungkinan sedikit terlalu optimis** (model pernah melihat tempat itu, walau dari frame lain). Model ronde 2 (`v2bersih`, `v3`) dilatih tanpa frame ini, jadi perbandingan baseline vs ronde 2 di taman-ubm **berat sebelah, menguntungkan baseline**. Kalau ronde 2 tetap lebih baik di taman-ubm, kesimpulan itu aman; kalau baseline lebih baik di taman-ubm saja, sebagian bisa karena kebocoran. Angka lantai 11 tidak terkena.
+- Lokasi val (dapsut, perpus-lt9, tangga-naik-lt9-lt10) tidak terkait; perbandingan di val tidak terpengaruh.
+- Cek ini hanya menangkap kemiripan visual. Frame latih lain dari lokasi luar UBM (halaman, samping, jalanan) yang memperlihatkan taman-ubm dari jauh mungkin masih ada; daftar urut kemiripan di `data/ronde2/bocor/skor.csv`.
+
 ## Protokol
 1. Test set tidak masuk folder training, validasi, atau cache latihan mana pun. Dicek: 0 file frame test di `data/` di luar folder test.
 2. Model dievaluasi di test set **hanya sekali**, baseline dan model ronde 2 bersama-sama, setelah semua pengaturan ronde 2 dikunci.
 3. Tidak ada tuning (ambang konfidensi, NMS, pilihan checkpoint, augmentasi) berdasarkan hasil test.
 4. Kalau test set diubah (label atau frame), tulis versi baru di dokumen ini dan evaluasi ulang kedua model bersama.
-5. Model kita belum pernah dijalankan di frame test (termasuk untuk pra-label atau memilih frame).
+5. Model kita belum pernah dijalankan di frame test (termasuk untuk pra-label atau memilih frame). Pengecualian yang tercatat: cek kebocoran 14 Nov 2026 menjalankan ResNet50 ImageNet generik (bukan model JalanKu) pada frame mentah taman-ubm, atas izin Jeka, hanya untuk mencari frame latih yang bocor.
 
 ## Berkas
 `data/test-review/` (91 gambar + 91 JSON, `daftar_test.csv`, `LOG.md`, `kualitas_auto*.csv`, `r4_dibuang.csv`), `data/test-review-auto-backup/`, `data/test-review-aux/` (sheet, cache, cadangan sebelum perubahan), `data/dataset-test-kotak/`, `data/dataset-test-seg/`. Semua di bawah `data/` (di-gitignore). Alat: `tools/pilih_frame_test.py`, `tools/cek_test_set.py`, `tools/buat_review_list.py`, `tools/validasi_test_set.py`, `tools/kualitas_auto_test.py`, `tools/bangun_dataset_test.py`.
