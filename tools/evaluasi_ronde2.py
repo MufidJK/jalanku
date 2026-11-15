@@ -39,8 +39,15 @@ MODEL = {
     "r2-kotak-v2bersih": ("detect", YK, "models/ronde2/r2-kotak-v2bersih_best.pt", 640),
     "r2-kotak-v3": ("detect", YK, "models/ronde2/r2-kotak-v3_best.pt", 640),
     "r2-kotak-v3-960": ("detect", YK, "models/ronde2/r2-kotak-v3-960_best.pt", 960),
+    "r3-kotak-v3-960-s": ("detect", YK, "models/ronde2/r3-kotak-v3-960-s_best.pt", 960),  # ronde 3, yolo26s
+    # ronde 4: val tetap val v2 (val v4 byte-identik). Bobot yang belum ada dilewati.
+    "r4-kotak-v3-1280": ("detect", YK, "models/ronde2/r4-kotak-v3-1280_best.pt", 1280),
+    "r4-kotak-v3-960-seed1": ("detect", YK, "models/ronde2/r4-kotak-v3-960-seed1_best.pt", 960),
+    "r4-kotak-v4-960": ("detect", YK, "models/ronde2/r4-kotak-v4-960_best.pt", 960),
+    "r4-kotak-v4-1280": ("detect", YK, "models/ronde2/r4-kotak-v4-1280_best.pt", 1280),
     "baseline-seg": ("segment", YS, "models/baseline/seg-kampus_best.pt", 640),
     "r2-seg-v3": ("segment", YS, "models/ronde2/r2-seg-v3_best.pt", 640),
+    "r4-seg-v4": ("segment", YS, "models/ronde2/r4-seg-v4_best.pt", 640),
 }
 IMGSZ = {"nilai": 640}
 
