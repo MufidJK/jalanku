@@ -1,0 +1,64 @@
+
+# JALANKU - Server Configuration
+# Baseline model - 11 November 2026
+
+# Model paths
+model_kotak: models/baseline/kotak-gabung_best.pt
+model_seg: models/baseline/seg-kampus_best.pt
+
+# Inference
+imgsz: 640
+device: auto
+half: true
+
+# Confidence threshold per class
+conf_kelas:
+  pilar: 0.35
+  pohon: 0.35
+  tepian: 0.35
+  orang: 0.40
+  tanaman_pot: 0.35
+  kursi: 0.40
+  kendaraan: 0.40
+  tangga: 0.40
+  jalur_jalan: 0.35
+  jalan_kendaraan: 0.35
+
+# Object position
+zona_tengah: 0.40
+
+# Distance estimation based on bounding box y2
+jarak_y2:
+  dekat: 0.85
+  sedang: 0.65
+
+# Danger weights
+bobot_kelas:
+  tangga: 3
+  tepian: 3
+  kendaraan: 3
+  pilar: 2
+  pohon: 2
+  orang: 2
+  tanaman_pot: 1
+  kursi: 1
+
+# Position multipliers
+faktor_posisi:
+  kiri: 0.7
+  tengah: 1.0
+  kanan: 0.7
+
+# Distance multipliers
+faktor_jarak:
+  dekat: 1.0
+  sedang: 0.7
+  jauh: 0.4
+
+# Frame stabilization
+stabil:
+  jendela: 3
+  minimal: 2
+
+# Segmentation
+jalur_ambang_terhalang: 0.20
