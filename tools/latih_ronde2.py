@@ -28,6 +28,8 @@ import latih_baseline as lb  # noqa: E402
 ROOT = lb.ROOT
 BATCH_640 = 16
 BATCH_960 = 16  # diisi dari smoke test (CHECKPOINT R2)
+BATCH_1280 = 8  # smoke ronde 4: b8 138 s/epoch VRAM 5,85 GiB; b10 140 s 7,24 GiB (mepet); b12 946 s 8,71 GiB (meluber)
+BATCH_960_S = 6  # yolo26s pada 960, dari smoke test ronde 3: b6 130 s/epoch VRAM 4,65 GiB; b8 266 s/epoch VRAM 6,10 GiB (meluber)
 
 RUNS = {
     "r2-kotak-v2bersih": dict(model="yolo26n.pt", data="data/dataset-gabung-kotak-v2bersih/data.yaml", epochs=100,
@@ -36,6 +38,21 @@ RUNS = {
                         imgsz=640, batch=BATCH_640),
     "r2-kotak-v3-960": dict(model="yolo26n.pt", data="data/dataset-gabung-kotak-v3/data.yaml", epochs=100, patience=30,
                             imgsz=960, batch=BATCH_960),
+    # ronde 3 (14 Nov 2026): model s, data dan setelan sama dengan r2-kotak-v3-960; batch dari smoke test
+    "r3-kotak-v3-960-s": dict(model="yolo26s.pt", data="data/dataset-gabung-kotak-v3/data.yaml", epochs=100, patience=30,
+                              imgsz=960, batch=BATCH_960_S),
+    # ronde 4 (14 Nov 2026), eksperimen tanpa label baru: setelan sama dengan r2-kotak-v3-960 kecuali yang tertulis
+    "r4-kotak-v3-1280": dict(model="yolo26n.pt", data="data/dataset-gabung-kotak-v3/data.yaml", epochs=100, patience=30,
+                             imgsz=1280, batch=BATCH_1280),
+    "r4-kotak-v3-960-seed1": dict(model="yolo26n.pt", data="data/dataset-gabung-kotak-v3/data.yaml", epochs=100, patience=30,
+                                  imgsz=960, batch=BATCH_960, seed=1),
+    # ronde 4, training pada dataset v4 (prompt ronde 4 section 7; r4-kotak-v4-1280 hanya kalau aturan imgsz section 8 lolos)
+    "r4-kotak-v4-960": dict(model="yolo26n.pt", data="data/dataset-gabung-kotak-v4/data.yaml", epochs=100, patience=30,
+                            imgsz=960, batch=BATCH_960),
+    "r4-kotak-v4-1280": dict(model="yolo26n.pt", data="data/dataset-gabung-kotak-v4/data.yaml", epochs=100, patience=30,
+                             imgsz=1280, batch=BATCH_1280),
+    "r4-seg-v4": dict(model="yolo26n-seg.pt", data="data/dataset-gabung-seg-v4/data.yaml", epochs=300, patience=100,
+                      imgsz=640, batch=BATCH_640),
     "r2-seg-v3": dict(model="yolo26n-seg.pt", data="data/dataset-gabung-seg-v3/data.yaml", epochs=300, patience=100,
                       imgsz=640, batch=BATCH_640),
 }
@@ -50,7 +67,7 @@ def main():
     cfg = RUNS[run]
     lb.PROJECT = ROOT / "runs" / "ronde2"
     lb.SMOKE = lb.PROJECT / "_smoke"
-    lb.FIXED = dict(lb.FIXED, imgsz=cfg["imgsz"])
+    lb.FIXED = dict(lb.FIXED, imgsz=cfg["imgsz"], seed=cfg.get("seed", 0))  # seed per run, default tetap 0
     lb.BATCH = cfg["batch"]
     lb.RUNS = {k: {kk: v[kk] for kk in ("model", "data", "epochs", "patience")} for k, v in RUNS.items()}
     try:
