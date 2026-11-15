@@ -1,28 +1,47 @@
+# JALANKU - Server Configuration (server v2)
+# Model FINAL yang dikunci 15 November 2026. Nilai model dan ambang berasal dari
+# data/test-final/config_saran.yaml ([ENS-8] di data/test-final/LOG.md). JANGAN diubah.
+# Semua path model relatif terhadap root repo.
 
-# JALANKU - Server Configuration
-# Baseline model - 11 November 2026
+# Nama yang dilaporkan GET /api/status
+nama_model: ensemble-final
 
-# Model paths
-model_kotak: models/baseline/kotak-gabung_best.pt
-model_seg: models/baseline/seg-kampus_best.pt
+# --- Model kotak: ENSEMBLE (C2) ---
+# 4 model, digabung per kelas dengan WBF (src/server/ensemble.py).
+ensemble_kotak:
+  - {bobot: models/ronde2/r2-kotak-v3-960_best.pt, imgsz: 960}
+  - {bobot: models/ronde2/r4-kotak-v3-960-seed1_best.pt, imgsz: 960}
+  - {bobot: models/ronde2/r4-kotak-v4-960_best.pt, imgsz: 960}
+  - {bobot: models/ronde2/r4-kotak-v3-1280_best.pt, imgsz: 1280}
+wbf_iou: 0.55
+# conf predict() tiap anggota; sesudah WBF baru disaring per kelas dengan conf_kelas
+conf_prediksi_kotak: 0.05
 
-# Inference
-imgsz: 640
-device: auto
-half: true
+# --- Alternatif untuk laptop lemah: SATU model ---
+# Hapus/komentari blok ensemble_kotak di atas, lalu aktifkan tiga baris ini:
+# nama_model: r2-kotak-v3-960
+# model_kotak: models/ronde2/r2-kotak-v3-960_best.pt
+# imgsz: 960
 
-# Confidence threshold per class
+# --- Model segmentasi ---
+model_seg: models/ronde2/r2-seg-v3_best.pt
+imgsz_seg: 640
+conf_seg: 0.25
+
+# Inference. GPU dipakai otomatis kalau ada, kalau tidak CPU.
+# half: false = fp32, sama dengan evaluasi dan protokol kecepatan yang dikunci.
+half: false
+
+# Confidence threshold per class (model kotak, terkunci)
 conf_kelas:
-  pilar: 0.35
-  pohon: 0.35
-  tepian: 0.35
-  orang: 0.40
-  tanaman_pot: 0.35
-  kursi: 0.40
-  kendaraan: 0.40
-  tangga: 0.40
-  jalur_jalan: 0.35
-  jalan_kendaraan: 0.35
+  pilar: 0.25
+  pohon: 0.25
+  tepian: 0.2
+  orang: 0.6
+  tanaman_pot: 0.25
+  kursi: 0.25
+  kendaraan: 0.1
+  tangga: 0.25
 
 # Object position
 zona_tengah: 0.40
@@ -55,10 +74,17 @@ faktor_jarak:
   sedang: 0.7
   jauh: 0.4
 
-# Frame stabilization
+# Skor (bobot x posisi x jarak) minimal untuk tiap tingkat; di bawahnya tingkat 1
+ambang_tingkat:
+  3: 2.0
+  2: 1.2
+
+# Frame stabilization (objek dan peringatan seg), per X-Sesi
 stabil:
   jendela: 3
   minimal: 2
 
-# Segmentation
-jalur_ambang_terhalang: 0.20
+# Segmentation, diukur di ROI bawah-tengah (sepertiga bawah, selebar zona_tengah)
+jalur_ambang_terhalang: 0.20   # persen_jalan di bawah ini -> "Jalur terhalang"
+seg_tangga_min: 0.05           # tangga >= 5% ROI -> "Tangga di depan" (tingkat 3)
+seg_kendaraan_min: 0.50        # jalan_kendaraan >= 50% ROI -> "Area kendaraan, hati-hati"

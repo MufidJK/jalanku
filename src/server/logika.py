@@ -10,6 +10,36 @@ class MesinLogika:
         self.minimal_stabil = stabil.get("minimal", 2)
 
         self.riwayat_frame = {}
+        self.riwayat_seg = {}
+
+        # Ambang skor -> tingkat (kunci YAML bisa int atau str)
+        ambang = {
+            int(k): float(v)
+            for k, v in config.get(
+                "ambang_tingkat", {3: 2.0, 2: 1.2}
+            ).items()
+        }
+        self.ambang_tingkat = sorted(ambang.items(), reverse=True)
+
+    def _riwayat(self, simpanan, sesi_id):
+        """Riwayat per sesi; sesi terlama dibuang kalau terlalu banyak."""
+
+        if sesi_id not in simpanan:
+            maks = self.config.get("maks_sesi", 200)
+            while len(simpanan) >= maks:
+                simpanan.pop(next(iter(simpanan)))
+            simpanan[sesi_id] = deque(maxlen=self.jendela_stabil)
+
+        return simpanan[sesi_id]
+
+    @staticmethod
+    def buat_pesan(kelas, posisi, jarak):
+        """Pesan untuk TTS, contoh: 'Tanaman pot di kanan, dekat'."""
+
+        nama = kelas.replace("_", " ").capitalize()
+        tempat = "di depan" if posisi == "tengah" else f"di {posisi}"
+
+        return f"{nama} {tempat}, {jarak}"
 
     def tentukan_posisi(self, kotak):
         """
@@ -81,12 +111,12 @@ class MesinLogika:
 
         skor = bobot * posisi_factor * jarak_factor
 
-        if skor >= 2.5:
-            tingkat = 3
-        elif skor >= 1.2:
-            tingkat = 2
-        else:
-            tingkat = 1
+        tingkat = 1
+
+        for nilai_tingkat, batas in self.ambang_tingkat:
+            if skor >= batas:
+                tingkat = nilai_tingkat
+                break
 
         peringatan_aktif = (
             posisi == "tengah" or jarak == "dekat"
@@ -151,10 +181,10 @@ class MesinLogika:
         )
 
         return {
-            "pesan": (
-                f"{objek_terpilih['kelas']} di "
-                f"{objek_terpilih['posisi']}, "
-                f"{objek_terpilih['jarak']}"
+            "pesan": self.buat_pesan(
+                objek_terpilih["kelas"],
+                objek_terpilih["posisi"],
+                objek_terpilih["jarak"],
             ),
             "kelas": objek_terpilih["kelas"],
             "posisi": objek_terpilih["posisi"],
@@ -164,99 +194,91 @@ class MesinLogika:
 
     def analisis_jalur(self, mask_seg, kelas_seg, nama_kelas_seg):
         """
-        Menganalisis jalur pejalan kaki pada area
-        bawah-tengah gambar.
+        Menganalisis area bawah-tengah gambar (ROI) dari model seg.
 
-        Menghasilkan:
-        - status: terbuka, terhalang, tidak_jelas
-        - persen_jalan: proporsi jalur pejalan kaki
+        Menghasilkan (jalur, kandidat):
+        - jalur: status terbuka/terhalang/tidak_jelas + persen_jalan
+        - kandidat: peringatan dari seg untuk frame ini (belum
+          distabilkan), atau None
         """
 
+        # Tidak ada keluaran seg sama sekali (kamera ke langit-langit,
+        # gelap): tidak_jelas dan TANPA peringatan.
         if mask_seg is None or len(mask_seg) == 0:
-            return {
-                "status": "tidak_jelas",
-                "persen_jalan": 0.0,
-            }
+            return {"status": "tidak_jelas", "persen_jalan": 0.0}, None
 
         tinggi, lebar = mask_seg.shape[1:]
 
-        # Area tengah gambar: 40% lebar
+        # Area tengah gambar: zona_tengah dari lebar
         lebar_zona = self.config.get("zona_tengah", 0.40)
         x1 = int((1 - lebar_zona) / 2 * lebar)
         x2 = int((1 + lebar_zona) / 2 * lebar)
 
         # Area bawah gambar: sepertiga bagian terbawah
         y1 = int(tinggi * 2 / 3)
-        y2 = tinggi
 
-        area = (slice(y1, y2), slice(x1, x2))
+        roi = mask_seg[:, y1:tinggi, x1:x2] > 0.5
 
-        nama_jalur = next(
-            (kelas_id for kelas_id, nama in nama_kelas_seg.items()
-             if nama == "jalur_jalan"),
-            None,
-        )
+        def persen(nama):
+            pilih = [
+                i for i, kelas_id in enumerate(kelas_seg)
+                if nama_kelas_seg.get(int(kelas_id)) == nama
+            ]
+            if not pilih or roi[0].size == 0:
+                return 0.0
+            return float(roi[pilih].any(axis=0).mean())
 
-        nama_tangga = next(
-            (kelas_id for kelas_id, nama in nama_kelas_seg.items()
-             if nama == "tangga"),
-            None,
-        )
+        persen_jalan = persen("jalur_jalan")
+        persen_tangga = persen("tangga")
+        persen_kendaraan = persen("jalan_kendaraan")
 
-        if nama_jalur is None:
-            return {
-                "status": "tidak_jelas",
-                "persen_jalan": 0.0,
-            }
+        min_tangga = self.config.get("seg_tangga_min", 0.05)
+        min_kendaraan = self.config.get("seg_kendaraan_min", 0.50)
+        ambang = self.config.get("jalur_ambang_terhalang", 0.20)
 
-        # Gabungkan mask jalur pejalan kaki
-        mask_jalan = None
-        mask_tangga = None
+        kandidat = None
 
-        for mask, kelas_id in zip(mask_seg, kelas_seg):
-            area_mask = mask[area] > 0.5
-
-            if kelas_id == nama_jalur:
-                if mask_jalan is None:
-                    mask_jalan = area_mask.copy()
-                else:
-                    mask_jalan |= area_mask
-
-            if kelas_id == nama_tangga:
-                if mask_tangga is None:
-                    mask_tangga = area_mask.copy()
-                else:
-                    mask_tangga |= area_mask
-
-        persen_jalan = (
-            float(mask_jalan.mean())
-            if mask_jalan is not None
-            else 0.0
-        )
-
-        ambang = self.config.get(
-            "jalur_ambang_terhalang",
-            0.20,
-        )
-
-        ada_tangga = (
-            mask_tangga is not None
-            and bool(mask_tangga.any())
-        )
-
-        if ada_tangga:
+        if persen_tangga >= min_tangga:
             status = "terhalang"
-        elif mask_jalan is None:
+            kandidat = ("tangga", "Tangga di depan", 3)
+        elif persen_kendaraan >= min_kendaraan:
             status = "tidak_jelas"
+            kandidat = ("jalan_kendaraan", "Area kendaraan, hati-hati", 2)
         elif persen_jalan < ambang:
             status = "terhalang"
+            kandidat = ("jalur_jalan", "Jalur terhalang", 2)
         else:
             status = "terbuka"
+
+        if kandidat is not None:
+            kelas, pesan, tingkat = kandidat
+            kandidat = {
+                "pesan": pesan,
+                "kelas": kelas,
+                "posisi": "tengah",
+                "jarak": "dekat",
+                "tingkat": tingkat,
+            }
 
         return {
             "status": status,
             "persen_jalan": round(persen_jalan, 4),
-        }
+        }, kandidat
+
+    def stabilkan_seg(self, kandidat, sesi_id="default"):
+        """Peringatan seg hanya keluar kalau muncul minimal N dari N frame terakhir."""
+
+        riwayat = self._riwayat(self.riwayat_seg, sesi_id)
+        kunci = kandidat["kelas"] if kandidat else None
+        riwayat.append(kunci)
+
+        if kandidat is None:
+            return None
+
+        if sum(1 for k in riwayat if k == kunci) >= self.minimal_stabil:
+            return kandidat
+
+        return None
 
     def hitung_iou(self, kotak_a, kotak_b):
         """Menghitung Intersection over Union dua bounding box."""
@@ -284,10 +306,7 @@ class MesinLogika:
     def stabilkan_objek(self, daftar_objek, sesi_id="default"):
         """Mempertahankan objek yang muncul minimal N dari N frame."""
 
-        riwayat = self.riwayat_frame.setdefault(
-            sesi_id,
-            deque(maxlen=self.jendela_stabil),
-        )
+        riwayat = self._riwayat(self.riwayat_frame, sesi_id)
 
         frame_sekarang = [
             {
@@ -341,11 +360,21 @@ class MesinLogika:
             objek_stabil
         )
 
-        jalur = self.analisis_jalur(
+        jalur, kandidat_seg = self.analisis_jalur(
             hasil_deteksi["mask_seg"],
             hasil_deteksi["kelas_seg"],
             hasil_deteksi["nama_kelas_seg"],
         )
+
+        peringatan_seg = self.stabilkan_seg(kandidat_seg, sesi_id)
+
+        # SATU peringatan: tingkat tertinggi; seri -> objek kotak
+        # (lebih spesifik daripada peringatan seg).
+        if peringatan_seg is not None and (
+            peringatan is None
+            or peringatan_seg["tingkat"] > peringatan["tingkat"]
+        ):
+            peringatan = peringatan_seg
 
         objek_api = [
             {

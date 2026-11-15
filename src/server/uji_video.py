@@ -4,25 +4,20 @@ import time
 from pathlib import Path
 
 import cv2
-import yaml
 
-from deteksi import MesinDeteksi
+from deteksi import ROOT, MesinDeteksi, muat_config
 from logika import MesinLogika
 
 
-ROOT = Path(__file__).resolve().parents[2]
-CONFIG_PATH = ROOT / "src/server/config.yaml"
 OUTPUT_DIR = ROOT / "runs/app"
 
+# Lokasi TEST: model tidak boleh dijalankan di sini.
+LOKASI_TEST = ("selasar-lt11", "pot-lt11", "taman-ubm")
 
-def muat_config():
-    with open(CONFIG_PATH, encoding="utf-8") as file:
-        config = yaml.safe_load(file)
 
-    config["model_kotak"] = str(ROOT / config["model_kotak"])
-    config["model_seg"] = str(ROOT / config["model_seg"])
-
-    return config
+def lokasi_test(path):
+    teks = str(path).lower()
+    return next((nama for nama in LOKASI_TEST if nama in teks), None)
 
 
 def anotasi_gambar(gambar, objek, peringatan, jalur):
@@ -95,8 +90,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--lokasi",
+        nargs="+",
         default=None,
-        help="Filter nama lokasi, contoh: lorong",
+        help="Filter nama lokasi (boleh lebih dari satu), "
+             "contoh: lorong-lt9 samping-ubm",
     )
     parser.add_argument(
         "--limit",
@@ -124,8 +121,26 @@ def main():
     if args.lokasi:
         manifests = [
             path for path in manifests
-            if args.lokasi.lower() in str(path).lower()
+            if any(
+                nama.lower() in str(path).lower()
+                for nama in args.lokasi
+            )
         ]
+
+    boleh = []
+
+    for path in manifests:
+        nama_test = lokasi_test(path)
+
+        if nama_test:
+            print(
+                f"[PERINGATAN] Dilewati (lokasi test {nama_test}): "
+                f"{path.parent}"
+            )
+        else:
+            boleh.append(path)
+
+    manifests = boleh
 
     if not manifests:
         raise FileNotFoundError("Manifest tidak ditemukan.")

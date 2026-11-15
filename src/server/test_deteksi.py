@@ -1,70 +1,75 @@
+"""Uji cepat satu gambar tanpa HTTP.
 
+    python src/server/test_deteksi.py <path-gambar.jpg>
+
+Path model diambil dari config.yaml (relatif terhadap root repo).
+Jangan dipakai untuk frame lokasi test.
+"""
+import argparse
+import sys
 from pathlib import Path
 
 import cv2
-import yaml
 
-from deteksi import MesinDeteksi
+from deteksi import MesinDeteksi, muat_config
 from logika import MesinLogika
 
 
-# Lokasi root repository
-ROOT = Path(__file__).resolve().parents[2]
+LOKASI_TEST = ("selasar-lt11", "pot-lt11", "taman-ubm")
 
-# Baca konfigurasi
-with open(ROOT / "src/server/config.yaml", encoding="utf-8") as file:
-    config = yaml.safe_load(file)
 
-# Lokasi satu frame training
-gambar_path = (
-    ROOT
-    / "data/frame-blur/lorong-lt9-ubm-tower_2026-10-30_03_dada-20261111T155025Z-1-001"
-    / "lorong-lt9-ubm-tower_2026-10-30_03_dada"
-    / "lorong-lt9-ubm-tower_2026-10-30_03_dada_t0000000.jpg"
-)
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("gambar", help="Path gambar (JPEG/PNG)")
+    args = parser.parse_args()
 
-# Baca gambar
-gambar = cv2.imread(str(gambar_path))
+    gambar_path = Path(args.gambar).resolve()
 
-if gambar is None:
-    raise FileNotFoundError(f"Gambar tidak ditemukan: {gambar_path}")
+    if any(nama in str(gambar_path).lower() for nama in LOKASI_TEST):
+        sys.exit("Ditolak: gambar dari lokasi test.")
 
-print("=" * 50)
-print("JALANKU - TEST INFERENCE")
-print("=" * 50)
-print("Gambar:", gambar_path.name)
-print("Resolusi:", gambar.shape[1], "x", gambar.shape[0])
+    gambar = cv2.imread(str(gambar_path))
 
-# Inisialisasi model
-mesin = MesinDeteksi(config)
+    if gambar is None:
+        raise FileNotFoundError(f"Gambar tidak ditemukan: {gambar_path}")
 
-# Jalankan inference
-hasil = mesin.prediksi(gambar)
+    config = muat_config()
 
-print("\n--- HASIL DETEKSI KOTAK ---")
+    print("=" * 50)
+    print("JALANKU - TEST INFERENCE")
+    print("=" * 50)
+    print("Gambar:", gambar_path.name)
+    print("Resolusi:", gambar.shape[1], "x", gambar.shape[0])
 
-for objek in hasil["objek"]:
-    print(objek)
+    mesin = MesinDeteksi(config)
+    hasil = mesin.prediksi(gambar)
 
-print("\n--- HASIL SEGMENTASI ---")
+    print("\n--- HASIL DETEKSI KOTAK ---")
 
-if hasil["mask_seg"] is not None:
-    print("Jumlah mask:", len(hasil["mask_seg"]))
-    print("Bentuk mask:", hasil["mask_seg"].shape)
-    print("Kelas segmentasi:", hasil["nama_kelas_seg"])
-    print("ID kelas setiap mask:", hasil["kelas_seg"])
-    print("Jumlah ID kelas:", len(hasil["kelas_seg"]))
-else:
-    print("Tidak ada mask segmentasi yang dihasilkan.")
+    for objek in hasil["objek"]:
+        print(objek)
 
-print("\n--- PERFORMA ---")
-print("Waktu inference:", hasil["waktu_ms"], "ms")
+    print("\n--- HASIL SEGMENTASI ---")
 
-print("\nTEST SELESAI")
+    if hasil["mask_seg"] is not None:
+        print("Jumlah mask:", len(hasil["mask_seg"]))
+        print("Bentuk mask:", hasil["mask_seg"].shape)
+        print("Kelas segmentasi:", hasil["nama_kelas_seg"])
+        print("ID kelas setiap mask:", hasil["kelas_seg"])
+    else:
+        print("Tidak ada mask segmentasi yang dihasilkan.")
 
-# Uji integrasi mesin logika
-mesin_logika = MesinLogika(config)
-hasil_navigasi = mesin_logika.proses(hasil)
+    print("\n--- PERFORMA ---")
+    print("Waktu inference:", hasil["waktu_ms"], "ms")
 
-print('\n--- HASIL ANALISIS JALANKU ---')
-print(hasil_navigasi)
+    # Dua kali supaya stabilisasi 2 dari 3 frame terpenuhi
+    mesin_logika = MesinLogika(config)
+    mesin_logika.proses(hasil)
+    hasil_navigasi = mesin_logika.proses(hasil)
+
+    print("\n--- HASIL ANALISIS JALANKU ---")
+    print(hasil_navigasi)
+
+
+if __name__ == "__main__":
+    main()
