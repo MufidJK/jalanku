@@ -59,3 +59,10 @@ function ucapkan(peringatan) {
   pesanTerakhir = peringatan.pesan;
   waktuTerakhir = sekarang;
 }
+
+if ("speechSynthesis" in window) {
+  window.speechSynthesis.onvoiceschanged = () => {
+    const v = pilihSuaraIndonesia();
+    namaSuara = v ? v.name : "bawaan (tanpa id-ID)";
+  };
+}

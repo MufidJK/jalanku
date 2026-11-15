@@ -177,9 +177,8 @@ async function siklus() {
     if (MODE_MOCK) {
       balasan = await ambilMock();
     } else {
-      // Langkah 5: kirim ke POST /api/deteksi (belum dikerjakan)
-      info.textContent = "Frame " + jumlah + " (server belum disambung)";
-      return;
+      balasan = await kirimKeServer(jpeg);
+      if (!balasan) return;
     }
     tampilkanBalasan(balasan, performance.now() - t0);
   } finally {
