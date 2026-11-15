@@ -243,3 +243,7 @@ kaggle.json
 
 
 .claude/settings.local.json
+# Sertifikat dan kunci HTTPS lokal (jangan pernah di-commit)
+*.pem
+*.key
+*.crt

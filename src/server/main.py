@@ -1,31 +1,27 @@
-﻿from contextlib import asynccontextmanager
-from pathlib import Path
+﻿import time
+from contextlib import asynccontextmanager
 
 import cv2
 import numpy as np
-import yaml
 
 from fastapi import FastAPI, Request, Header
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
-from deteksi import MesinDeteksi
+from deteksi import ROOT, MesinDeteksi, muat_config, sinkron_gpu
 from logika import MesinLogika
 
 
-ROOT = Path(__file__).resolve().parents[2]
-CONFIG_PATH = ROOT / "src" / "server" / "config.yaml"
+WEB_DIR = ROOT / "src" / "web"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    with open(CONFIG_PATH, encoding="utf-8") as file:
-        config = yaml.safe_load(file)
-
-    config["model_kotak"] = str(ROOT / config["model_kotak"])
-    config["model_seg"] = str(ROOT / config["model_seg"])
+    config = muat_config()
 
     print("[JalanKu] Memuat model...")
 
+    app.state.nama_model = str(config.get("nama_model", "model"))
     app.state.mesin_deteksi = MesinDeteksi(config)
     app.state.mesin_logika = MesinLogika(config)
 
@@ -41,18 +37,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="JalanKu API",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
 
 @app.get("/api/status")
 async def status(request: Request):
-    siap = getattr(request.app.state, "siap", False)
-
     return {
-        "siap": siap,
-        "model": "baseline",
+        "siap": getattr(request.app.state, "siap", False),
+        "model": getattr(request.app.state, "nama_model", "model"),
         "versi_kontrak": 1,
     }
 
@@ -71,13 +65,12 @@ async def deteksi(
                 content={"error": "Gambar kosong."},
             )
 
-        gambar_array = np.frombuffer(
-            data_gambar,
-            dtype=np.uint8,
-        )
+        # waktu_ms = seluruh pemrosesan server per permintaan:
+        # decode + semua model + WBF + logika.
+        mulai = time.perf_counter()
 
         gambar = cv2.imdecode(
-            gambar_array,
+            np.frombuffer(data_gambar, dtype=np.uint8),
             cv2.IMREAD_COLOR,
         )
 
@@ -98,6 +91,13 @@ async def deteksi(
             sesi_id=sesi_id,
         )
 
+        sinkron_gpu()
+
+        hasil["waktu_ms"] = round(
+            (time.perf_counter() - mulai) * 1000,
+            2,
+        )
+
         return hasil
 
     except Exception as error:
@@ -107,3 +107,12 @@ async def deteksi(
             status_code=500,
             content={"error": "Gagal memproses gambar."},
         )
+
+
+# Halaman web (src/web/). Harus SETELAH semua route /api supaya
+# tidak menutupi route di atas.
+app.mount(
+    "/",
+    StaticFiles(directory=str(WEB_DIR), html=True),
+    name="web",
+)
