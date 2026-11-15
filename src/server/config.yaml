@@ -88,3 +88,4 @@ stabil:
 jalur_ambang_terhalang: 0.20   # persen_jalan di bawah ini -> "Jalur terhalang"
 seg_tangga_min: 0.05           # tangga >= 5% ROI -> "Tangga di depan" (tingkat 3)
 seg_kendaraan_min: 0.50        # jalan_kendaraan >= 50% ROI -> "Area kendaraan, hati-hati"
+seg_kosong_minimal: 3          # seg kosong N frame berturut-turut -> "Hati-hati, jalur tidak terlihat" (<= stabil.jendela)
