@@ -1,5 +1,6 @@
 const pengaturanSuara = {
   jedaUlangMs: 4000,
+  jedaKelasRinganMs: 8000, // benda ringan (tingkat 1) berkelas sama tidak diucapkan ulang; 0 = mati
   rate: 1,
   volume: 1,
 };
@@ -7,6 +8,7 @@ const pengaturanSuara = {
 let bisu = false;
 let pesanTerakhir = "";
 let waktuTerakhir = 0;
+const waktuKelasRingan = {}; // kelas -> waktu terakhir diucapkan (khusus tingkat 1)
 let namaSuara = "belum dibuka";
 
 function pilihSuaraIndonesia() {
@@ -39,6 +41,17 @@ function ucapkan(peringatan) {
   const sama = peringatan.pesan === pesanTerakhir;
   if (sama && sekarang - waktuTerakhir < pengaturanSuara.jedaUlangMs) return;
 
+  // Benda ringan (tingkat 1): kelas yang sama tidak diucapkan lagi dalam jeda ini,
+  // walau teksnya berbeda (kanan/depan, dekat/sedang). Tingkat 2 dan 3 tidak terpengaruh.
+  const jedaRingan = pengaturanSuara.jedaKelasRinganMs;
+  if (
+    peringatan.tingkat === 1 &&
+    jedaRingan > 0 &&
+    sekarang - (waktuKelasRingan[peringatan.kelas] ?? -Infinity) < jedaRingan
+  ) {
+    return;
+  }
+
   // Getar: tingkat 3, tetap jalan walau Bisu (Bisu hanya mematikan suara).
   if (peringatan.tingkat === 3 && navigator.vibrate) {
     navigator.vibrate([200, 100, 200]);
@@ -63,6 +76,7 @@ function ucapkan(peringatan) {
 
   pesanTerakhir = peringatan.pesan;
   waktuTerakhir = sekarang;
+  if (peringatan.tingkat === 1) waktuKelasRingan[peringatan.kelas] = sekarang;
 }
 
 if ("speechSynthesis" in window) {

@@ -89,3 +89,8 @@ jalur_ambang_terhalang: 0.20   # persen_jalan di bawah ini -> "Jalur terhalang"
 seg_tangga_min: 0.05           # tangga >= 5% ROI -> "Tangga di depan" (tingkat 3)
 seg_kendaraan_min: 0.50        # jalan_kendaraan >= 50% ROI -> "Area kendaraan, hati-hati"
 seg_kosong_minimal: 3          # seg kosong N frame berturut-turut -> "Hati-hati, jalur tidak terlihat" (<= stabil.jendela)
+
+# Aturan peringatan, dipilih dari ablasi 16 Nov (data/aturan-peringatan/hasil_ablasi.md, K3).
+# Kembali ke perilaku lama: seg_tangga_stabil_minimal: 2 dan jauh_butuh_seg: false
+seg_tangga_stabil_minimal: 3   # "Tangga di depan" (seg) harus jadi kandidat di minimal N dari stabil.jendela frame (<= stabil.jendela; 2 = lama)
+jauh_butuh_seg: true           # true = objek kotak "jauh" tidak jadi peringatan saat seg tidak mengeluarkan mask sama sekali di frame itu

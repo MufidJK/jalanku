@@ -394,6 +394,11 @@ document.getElementById("atur-ulang").addEventListener("input", (e) => {
   document.getElementById("nilai-ulang").textContent = e.target.value;
 });
 
+document.getElementById("atur-ringan").addEventListener("input", (e) => {
+  pengaturanSuara.jedaKelasRinganMs = Number(e.target.value) * 1000;
+  document.getElementById("nilai-ringan").textContent = e.target.value;
+});
+
 document.getElementById("atur-rate").addEventListener("input", (e) => {
   pengaturanSuara.rate = Number(e.target.value);
   document.getElementById("nilai-rate").textContent =

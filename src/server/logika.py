@@ -2,6 +2,7 @@ from collections import deque
 
 
 PESAN_JALUR_TIDAK_TERLIHAT = "Hati-hati, jalur tidak terlihat"
+PESAN_TANGGA_SEG = "Tangga di depan"
 
 
 class MesinLogika:
@@ -19,6 +20,19 @@ class MesinLogika:
                 f"seg_kosong_minimal ({self.seg_kosong_minimal}) harus 1.."
                 f"stabil.jendela ({self.jendela_stabil})"
             )
+
+        # Aturan C: "Tangga di depan" dari seg butuh lebih banyak frame (default = stabil.minimal)
+        self.seg_tangga_stabil_minimal = config.get(
+            "seg_tangga_stabil_minimal", self.minimal_stabil
+        )
+        if not 1 <= self.seg_tangga_stabil_minimal <= self.jendela_stabil:
+            raise ValueError(
+                f"seg_tangga_stabil_minimal ({self.seg_tangga_stabil_minimal}) "
+                f"harus 1..stabil.jendela ({self.jendela_stabil})"
+            )
+
+        # Aturan B: objek "jauh" tidak jadi peringatan kalau seg kosong di frame ini
+        self.jauh_butuh_seg = bool(config.get("jauh_butuh_seg", False))
 
         self.riwayat_frame = {}
         self.riwayat_seg = {}
@@ -259,7 +273,7 @@ class MesinLogika:
 
         if persen_tangga >= min_tangga:
             status = "terhalang"
-            kandidat = ("tangga", "Tangga di depan", 3)
+            kandidat = ("tangga", PESAN_TANGGA_SEG, 3)
         elif persen_kendaraan >= min_kendaraan:
             status = "tidak_jelas"
             kandidat = ("jalan_kendaraan", "Area kendaraan, hati-hati", 2)
@@ -310,7 +324,11 @@ class MesinLogika:
 
             return None
 
-        if sum(1 for k in riwayat if k == kunci) >= self.minimal_stabil:
+        minimal = self.minimal_stabil
+        if kunci == PESAN_TANGGA_SEG:
+            minimal = self.seg_tangga_stabil_minimal
+
+        if sum(1 for k in riwayat if k == kunci) >= minimal:
             return kandidat
 
         return None
@@ -391,12 +409,20 @@ class MesinLogika:
             sesi_id,
         )
 
+        # Aturan B: tanpa mask seg di frame ini, objek "jauh" tetap tergambar
+        # di web (ada di daftar objek) tapi tidak boleh jadi peringatan.
+        mask_seg = hasil_deteksi["mask_seg"]
+        if self.jauh_butuh_seg and (mask_seg is None or len(mask_seg) == 0):
+            objek_stabil = [
+                objek for objek in objek_stabil if objek["jarak"] != "jauh"
+            ]
+
         peringatan = self.pilih_peringatan(
             objek_stabil
         )
 
         jalur, kandidat_seg = self.analisis_jalur(
-            hasil_deteksi["mask_seg"],
+            mask_seg,
             hasil_deteksi["kelas_seg"],
             hasil_deteksi["nama_kelas_seg"],
         )
