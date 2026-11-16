@@ -33,28 +33,33 @@ function setBisu(nilai) {
 }
 
 function ucapkan(peringatan) {
-  if (!peringatan || bisu) return;
-  if (!("speechSynthesis" in window)) return;
+  if (!peringatan) return;
 
   const sekarang = Date.now();
   const sama = peringatan.pesan === pesanTerakhir;
   if (sama && sekarang - waktuTerakhir < pengaturanSuara.jedaUlangMs) return;
 
-  const synth = window.speechSynthesis;
-  if (peringatan.tingkat === 3) {
-    synth.cancel(); // memotong suara yang sedang bicara
-    if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
-  } else if (synth.speaking) {
-    return; // tingkat rendah tidak memotong dan tidak menumpuk antrean
+  // Getar: tingkat 3, tetap jalan walau Bisu (Bisu hanya mematikan suara).
+  if (peringatan.tingkat === 3 && navigator.vibrate) {
+    navigator.vibrate([200, 100, 200]);
   }
 
-  const u = new SpeechSynthesisUtterance(peringatan.pesan);
-  u.lang = "id-ID";
-  u.rate = pengaturanSuara.rate;
-  u.volume = pengaturanSuara.volume;
-  const v = pilihSuaraIndonesia();
-  if (v) u.voice = v;
-  synth.speak(u);
+  if ("speechSynthesis" in window && !bisu) {
+    const synth = window.speechSynthesis;
+    if (peringatan.tingkat === 3) {
+      synth.cancel(); // memotong suara yang sedang bicara
+    } else if (synth.speaking) {
+      return; // tingkat rendah tidak memotong dan tidak menumpuk antrean
+    }
+
+    const u = new SpeechSynthesisUtterance(peringatan.pesan);
+    u.lang = "id-ID";
+    u.rate = pengaturanSuara.rate;
+    u.volume = pengaturanSuara.volume;
+    const v = pilihSuaraIndonesia();
+    if (v) u.voice = v;
+    synth.speak(u);
+  }
 
   pesanTerakhir = peringatan.pesan;
   waktuTerakhir = sekarang;

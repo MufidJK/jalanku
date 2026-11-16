@@ -135,7 +135,7 @@ html, body {
 /* Indikator zona kiri / tengah / kanan */
 #zona {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: 30fr 40fr 30fr;
   gap: 6px;
 }
 #zona div {
@@ -279,3 +279,8 @@ input:focus-visible {
 #layar-awal:not([hidden]) ~ #baris-kecil button {
   background: rgba(255, 255, 255, 0.14);
 }
+
+#info .jalur { font-weight: 700; }
+#info .jalur.terbuka { color: #81c784; }
+#info .jalur.terhalang,
+#info .jalur.tidak_jelas { color: #ffd54f; }

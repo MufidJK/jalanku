@@ -48,17 +48,21 @@ function sesuaikanOverlay() {
 }
 
 function garisZona() {
-  const W = overlay.width;
+  // Sebelum kamera jalan, ukuran video belum diketahui: jangan gambar garis.
+  if (!kamera.videoWidth || !kamera.videoHeight) return;
   const H = overlay.height;
+  // Zona server: kiri 30% / tengah 40% / kanan 30% dari lebar GAMBAR.
+  const x1 = petaKotak([0.3, 0, 0.3, 1])[0];
+  const x2 = petaKotak([0.7, 0, 0.7, 1])[0];
   ctx.save();
   ctx.strokeStyle = "rgba(255,255,255,0.45)";
   ctx.lineWidth = 2;
   ctx.setLineDash([10, 10]);
   ctx.beginPath();
-  ctx.moveTo(W / 3, 0);
-  ctx.lineTo(W / 3, H);
-  ctx.moveTo((2 * W) / 3, 0);
-  ctx.lineTo((2 * W) / 3, H);
+  ctx.moveTo(x1, 0);
+  ctx.lineTo(x1, H);
+  ctx.moveTo(x2, 0);
+  ctx.lineTo(x2, H);
   ctx.stroke();
   ctx.restore();
 }
@@ -143,26 +147,56 @@ function ambilJpeg() {
   });
 }
 
+const TEKS_JALUR = {
+  terhalang: {
+    teks: "Jalur terhalang",
+    detail: "Jalur tertutup, tanpa peringatan suara",
+  },
+  tidak_jelas: {
+    teks: "Jalur tidak jelas",
+    detail: "Kamera belum melihat jalan",
+  },
+};
+
 function tampilkanBalasan(balasan, latensiMs) {
   const p = balasan.peringatan;
+  const j = balasan.jalur || { status: "tidak_jelas", persen_jalan: 0 };
+  const statusJalur = j.status || "tidak_jelas";
+
   if (p) {
-    setStatus(
-      p.pesan,
-      p.tingkat,
-      "Posisi: " + p.posisi + " · Jarak: " + p.jarak
-    );
-  } else {
+    const detail = [
+      p.posisi ? "Posisi: " + p.posisi : "",
+      p.jarak ? "Jarak: " + p.jarak : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    setStatus(p.pesan, p.tingkat, detail);
+  } else if (statusJalur === "terbuka") {
     setStatus("Aman.", 0);
+  } else {
+    // Tidak ada peringatan tapi jalur tidak terbuka: jangan bilang "Aman."
+    const t = TEKS_JALUR[statusJalur] || TEKS_JALUR.tidak_jelas;
+    setStatus(t.teks, 2, t.detail);
   }
   setZona(p ? p.posisi : null, p ? p.tingkat : 0);
   gambarOverlay(balasan);
-  ucapkan(p);
+  ucapkan(p); // p null: tidak ada suara
+
   info.className =
     latensiMs < 100 ? "ok" : latensiMs < 300 ? "sedang" : "lambat";
-  info.textContent =
+  const persen = Math.round((j.persen_jalan || 0) * 100);
+  const spanJalur = document.createElement("span");
+  spanJalur.className = "jalur " + statusJalur;
+  spanJalur.textContent =
+    "jalur: " + statusJalur.replace("_", " ") + " " + persen + "%";
+  info.textContent = "";
+  info.append(
     (MODE_MOCK ? "MOCK | " : "") +
-    "Frame " + jumlah + " | " + Math.round(latensiMs) + " ms | objek: " +
-    balasan.objek.length + " | suara: " + namaSuara;
+      "Frame " + jumlah + " | " + Math.round(latensiMs) + " ms | objek: " +
+      balasan.objek.length + " | ",
+    spanJalur,
+    " | suara: " + namaSuara
+  );
 }
 
 async function siklus() {
@@ -208,6 +242,7 @@ async function mulaiKamera() {
     gambarOverlay(null);
     jumlah = 0;
     jalankanTimer();
+    mintaKunciLayar();
   } catch (err) {
     setStatus("Kamera gagal: " + err.name, null);
   }
@@ -216,6 +251,7 @@ async function mulaiKamera() {
 function berhentiKamera() {
   clearInterval(timer);
   timer = null;
+  lepasKunciLayar();
   if (stream) {
     stream.getTracks().forEach((t) => t.stop());
     stream = null;
@@ -230,6 +266,36 @@ function berhentiKamera() {
   layarAwal.hidden = false;
   bersihkanOverlay();
 }
+
+// --- Wake Lock: layar tidak mati selama jalan ---
+let kunciLayar = null;
+
+async function mintaKunciLayar() {
+  if (kunciLayar || !("wakeLock" in navigator)) return;
+  try {
+    kunciLayar = await navigator.wakeLock.request("screen");
+    kunciLayar.addEventListener("release", () => {
+      kunciLayar = null;
+    });
+  } catch (err) {
+    // Tidak didukung atau ditolak: abaikan, halaman tetap jalan.
+  }
+}
+
+async function lepasKunciLayar() {
+  if (!kunciLayar) return;
+  try {
+    await kunciLayar.release();
+  } catch (err) {
+    // abaikan
+  }
+  kunciLayar = null;
+}
+
+// Browser melepas kunci otomatis saat tab tersembunyi: minta lagi saat muncul.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && stream) mintaKunciLayar();
+});
 
 window.addEventListener("resize", () => {
   sesuaikanOverlay();
