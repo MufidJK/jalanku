@@ -25,10 +25,10 @@ Kedua modul itu tidak memuat torch, dan notebook mematikan penulisan bytecode su
 Folder `data/`, `runs/`, dan `models/` **tidak masuk Git** (ukuran besar, dan berisi frame kampus). Karena itu:
 
 - Di komputer lain, notebook hanya bisa **dibaca** dari keluaran yang tersimpan. Sel persiapan di tiap notebook mencetak daftar berkas yang tidak ditemukan.
-- Menjalankan ulang hanya bisa dilakukan di laptop yang memiliki folder-folder itu (laptop Jeka).
+- Menjalankan ulang hanya bisa dilakukan di laptop yang memiliki folder-folder itu (laptop Mufid).
 - Gambar yang ditampilkan hanya dari daftar putih privasi (frame kampus yang wajahnya sudah diburamkan, plot Ultralytics, dan beberapa lembar kontak). Tidak ada gambar dari rekaman rumah.
 
-## Menjalankan ulang di laptop Jeka
+## Menjalankan ulang di laptop Mufid
 
 Dari akar repo (PowerShell), memakai `venv` proyek:
 

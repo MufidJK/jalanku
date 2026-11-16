@@ -50,7 +50,7 @@ Biaya edit = 5 x FN + 2 x FP + 3 x TP dengan IoU < 0,7. Sumber termurah per kela
 | Kelas | Sumber dipakai | Catatan |
 |---|---|---|
 | pilar | gabungan model + auto, conf 0,25 | biaya 97; auto saja 117, model saja 130 |
-| pohon, kursi | gabungan, conf 0,35 | keputusan Jeka di R0 (tabel memilih auto) |
+| pohon, kursi | gabungan, conf 0,35 | keputusan Mufid di R0 (tabel memilih auto) |
 | tepian, orang, tanaman_pot, kendaraan, tangga | auto | |
 | jalur_jalan, jalan_kendaraan, tangga (mask) | auto | IoU piksel auto 0,96 / 0,92 / 0,90 vs model 0,64 / 0,77 / 0,79 |
 

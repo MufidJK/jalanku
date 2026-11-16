@@ -38,7 +38,7 @@ Pengaturan sama untuk semua run: `seed=0`, `deterministic=True`, `imgsz=640`, `b
 | `kotak-kampus` | yolo26n | kampus: 195 / 54 (ablasi, tanpa oversampling) | 300 | 100 |
 | `seg-kampus` | yolo26n-seg | `dataset-gabung-seg` = kampus saja: 195 / 54 | 300 | 100 |
 
-Epoch maks dan patience `kotak-kampus` dan `seg-kampus` dinaikkan dari rencana awal (150/50) menjadi 300/100 atas keputusan Jeka, supaya perbandingan tidak tercampur kurang latih akibat langkah optimizer per epoch yang jauh lebih sedikit pada data kecil.
+Epoch maks dan patience `kotak-kampus` dan `seg-kampus` dinaikkan dari rencana awal (150/50) menjadi 300/100 atas keputusan Mufid, supaya perbandingan tidak tercampur kurang latih akibat langkah optimizer per epoch yang jauh lebih sedikit pada data kecil.
 
 ### Waktu dan langkah optimizer (dari `meta.json`)
 
