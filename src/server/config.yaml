@@ -40,7 +40,7 @@ conf_kelas:
   orang: 0.6
   tanaman_pot: 0.25
   kursi: 0.25
-  kendaraan: 0.1
+  kendaraan: 0.25   # app: dinaikkan dari 0.1 (16 Nov) - alarm merah palsu di dalam ruangan; di kampus deteksi kendaraan asli hanya turun 1-8% frame
   tangga: 0.25
 
 # Object position
