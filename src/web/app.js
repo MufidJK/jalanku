@@ -20,11 +20,18 @@ const MODE_MOCK = new URLSearchParams(location.search).get("mock") === "1";
 const WARNA = { 0: "#1b7f3b", 1: "#1565c0", 2: "#f9a825", 3: "#c62828" };
 const IKON = { 0: "✔", 1: "ℹ", 2: "⚠", 3: "⛔" };
 
-let jedaKirimMs = 200;
+let jedaKirimMs = 200; // jeda MINIMUM antar pengiriman
 let stream = null;
-let timer = null;
+let timer = null; // setTimeout berikutnya (maksimal satu yang menunggu)
+let jalan = false; // loop kirim sedang aktif
 let sibuk = false;
 let jumlah = 0;
+
+// Banner "tanpa peringatan": ganti hanya setelah 2 balasan berturut-turut.
+const BALASAN_BERTURUT = 2;
+let bannerTanpaPeringatan = null; // "terbuka" | "tidak_jelas" | "terhalang" | null
+let hitungTerbuka = 0;
+let hitungTidakTerbuka = 0;
 
 // --- Status dan zona ---
 function setStatus(teks, tingkat, detail) {
@@ -158,12 +165,32 @@ const TEKS_JALUR = {
   },
 };
 
+function resetBanner() {
+  bannerTanpaPeringatan = null;
+  hitungTerbuka = 0;
+  hitungTidakTerbuka = 0;
+}
+
+function tampilkanTanpaPeringatan(statusJalur) {
+  bannerTanpaPeringatan = statusJalur;
+  if (statusJalur === "terbuka") {
+    setStatus("Aman.", 0);
+  } else {
+    // Jalur tidak terbuka tapi tanpa peringatan: jangan bilang "Aman.",
+    // tapi pakai gaya info (biru) supaya tidak mirip peringatan sungguhan.
+    const t = TEKS_JALUR[statusJalur] || TEKS_JALUR.tidak_jelas;
+    setStatus(t.teks, 1, t.detail);
+  }
+}
+
 function tampilkanBalasan(balasan, latensiMs) {
   const p = balasan.peringatan;
   const j = balasan.jalur || { status: "tidak_jelas", persen_jalan: 0 };
   const statusJalur = j.status || "tidak_jelas";
 
   if (p) {
+    // Peringatan tidak pernah ditunda: tampil langsung, hitungan diulang.
+    resetBanner();
     const detail = [
       p.posisi ? "Posisi: " + p.posisi : "",
       p.jarak ? "Jarak: " + p.jarak : "",
@@ -172,11 +199,20 @@ function tampilkanBalasan(balasan, latensiMs) {
       .join(" · ");
     setStatus(p.pesan, p.tingkat, detail);
   } else if (statusJalur === "terbuka") {
-    setStatus("Aman.", 0);
+    hitungTerbuka += 1;
+    hitungTidakTerbuka = 0;
+    if (bannerTanpaPeringatan === null || hitungTerbuka >= BALASAN_BERTURUT) {
+      tampilkanTanpaPeringatan("terbuka");
+    }
   } else {
-    // Tidak ada peringatan tapi jalur tidak terbuka: jangan bilang "Aman."
-    const t = TEKS_JALUR[statusJalur] || TEKS_JALUR.tidak_jelas;
-    setStatus(t.teks, 2, t.detail);
+    hitungTidakTerbuka += 1;
+    hitungTerbuka = 0;
+    if (
+      bannerTanpaPeringatan === null ||
+      hitungTidakTerbuka >= BALASAN_BERTURUT
+    ) {
+      tampilkanTanpaPeringatan(statusJalur);
+    }
   }
   setZona(p ? p.posisi : null, p ? p.tingkat : 0);
   gambarOverlay(balasan);
@@ -199,12 +235,22 @@ function tampilkanBalasan(balasan, latensiMs) {
   );
 }
 
+// Loop menjadwalkan dirinya sendiri: frame berikutnya dikirim begitu balasan
+// tiba, tapi tidak lebih cepat dari jedaKirimMs sejak siklus dimulai.
+function jadwalkan(tungguMs) {
+  clearTimeout(timer); // pastikan tidak pernah ada dua jadwal sekaligus
+  timer = jalan ? setTimeout(siklus, Math.max(0, tungguMs)) : null;
+}
+
 async function siklus() {
+  timer = null;
   if (sibuk) return; // hanya satu proses dalam satu waktu
   sibuk = true;
+  const tMulai = performance.now();
+  let berhasil = false;
   try {
     const jpeg = await ambilJpeg();
-    if (!jpeg) return;
+    if (!jpeg || !jalan) return;
     jumlah += 1;
     const t0 = performance.now();
     let balasan;
@@ -212,17 +258,31 @@ async function siklus() {
       balasan = await ambilMock();
     } else {
       balasan = await kirimKeServer(jpeg);
-      if (!balasan) return;
+      if (!balasan) {
+        resetBanner(); // banner "Server bermasalah" tampil; mulai bersih saat pulih
+        return;
+      }
     }
+    if (!jalan) return; // dihentikan saat menunggu balasan
     tampilkanBalasan(balasan, performance.now() - t0);
+    berhasil = true;
   } finally {
     sibuk = false;
+    // Berhasil: kurangi jeda dengan lamanya siklus. Gagal: tunggu jeda penuh.
+    if (jalan) jadwalkan(berhasil ? jedaKirimMs - (performance.now() - tMulai) : jedaKirimMs);
   }
 }
 
-function jalankanTimer() {
-  clearInterval(timer);
-  timer = setInterval(siklus, jedaKirimMs);
+function jalankanLoop() {
+  jalan = true;
+  resetBanner();
+  jadwalkan(0);
+}
+
+function hentikanLoop() {
+  jalan = false;
+  clearTimeout(timer);
+  timer = null;
 }
 
 async function mulaiKamera() {
@@ -241,7 +301,7 @@ async function mulaiKamera() {
     sesuaikanOverlay();
     gambarOverlay(null);
     jumlah = 0;
-    jalankanTimer();
+    jalankanLoop();
     mintaKunciLayar();
   } catch (err) {
     setStatus("Kamera gagal: " + err.name, null);
@@ -249,8 +309,7 @@ async function mulaiKamera() {
 }
 
 function berhentiKamera() {
-  clearInterval(timer);
-  timer = null;
+  hentikanLoop();
   lepasKunciLayar();
   if (stream) {
     stream.getTracks().forEach((t) => t.stop());
@@ -327,7 +386,7 @@ tombolAtur.addEventListener("click", () => {
 document.getElementById("atur-kirim").addEventListener("input", (e) => {
   jedaKirimMs = Number(e.target.value);
   document.getElementById("nilai-kirim").textContent = jedaKirimMs;
-  if (stream) jalankanTimer();
+  // Tidak perlu menyentuh loop: jeda baru dipakai pada penjadwalan berikutnya.
 });
 
 document.getElementById("atur-ulang").addEventListener("input", (e) => {

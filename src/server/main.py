@@ -1,5 +1,9 @@
-﻿import time
+﻿import json
+import os
+import re
+import time
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 import cv2
 import numpy as np
@@ -15,6 +19,67 @@ from logika import MesinLogika
 WEB_DIR = ROOT / "src" / "web"
 
 
+def siapkan_rekam(app: FastAPI):
+    """Mode rekam (mati secara bawaan): hanya aktif kalau JALANKU_REKAM=1."""
+    app.state.dir_rekam = None
+    app.state.hitung_rekam = 0
+
+    if os.environ.get("JALANKU_REKAM") != "1":
+        return
+
+    try:
+        dir_rekam = ROOT / "data" / "rekam" / datetime.now().strftime("%Y%m%d-%H%M%S")
+        dir_rekam.mkdir(parents=True, exist_ok=True)
+        app.state.dir_rekam = dir_rekam
+        print(f"[JalanKu] Mode REKAM aktif: {dir_rekam}")
+    except Exception as error:
+        print(f"[JalanKu] Gagal menyiapkan folder rekam: {error}")
+
+
+def rekam(app: FastAPI, data_gambar, sesi_id, hasil_deteksi, hasil):
+    """Simpan JPEG yang diterima + satu baris log.jsonl. Tidak boleh membuat request gagal."""
+    dir_rekam = app.state.dir_rekam
+    if dir_rekam is None:
+        return
+
+    try:
+        app.state.hitung_rekam += 1
+        nomor = app.state.hitung_rekam
+
+        # X-Sesi dari klien: bersihkan sebelum jadi nama file.
+        sesi_aman = re.sub(r"[^A-Za-z0-9_-]", "_", sesi_id)[:32] or "default"
+        (dir_rekam / f"{nomor:05d}_{sesi_aman}.jpg").write_bytes(data_gambar)
+
+        nama_seg = hasil_deteksi.get("nama_kelas_seg", {})
+        kelas_seg = hasil_deteksi.get("kelas_seg", [])
+        peringatan = hasil.get("peringatan")
+
+        baris = {
+            "nomor": nomor,
+            "waktu": datetime.now().isoformat(timespec="milliseconds"),
+            "sesi": sesi_id,
+            "waktu_ms": hasil.get("waktu_ms"),
+            "jumlah_seg": len(kelas_seg),
+            "kelas_seg": [nama_seg.get(int(k), str(k)) for k in kelas_seg],
+            "jalur": hasil.get("jalur"),
+            "peringatan": peringatan["pesan"] if peringatan else None,
+            "objek": [
+                {
+                    "kelas": o["kelas"],
+                    "conf": o["conf"],
+                    "posisi": o["posisi"],
+                    "jarak": o["jarak"],
+                }
+                for o in hasil.get("objek", [])
+            ],
+        }
+
+        with open(dir_rekam / "log.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(baris, ensure_ascii=False) + "\n")
+    except Exception as error:
+        print(f"[JalanKu] Gagal merekam: {error}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config = muat_config()
@@ -24,6 +89,8 @@ async def lifespan(app: FastAPI):
     app.state.nama_model = str(config.get("nama_model", "model"))
     app.state.mesin_deteksi = MesinDeteksi(config)
     app.state.mesin_logika = MesinLogika(config)
+
+    siapkan_rekam(app)
 
     app.state.siap = True
 
@@ -97,6 +164,8 @@ async def deteksi(
             (time.perf_counter() - mulai) * 1000,
             2,
         )
+
+        rekam(request.app, data_gambar, sesi_id, hasil_deteksi, hasil)
 
         return hasil
 
