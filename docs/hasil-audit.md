@@ -1,9 +1,9 @@
 # Hasil Audit Label Kampus (11 November 2026)
 
-Ditulis untuk: Jeka dan tim JalanKu yang perlu membaca hasil baseline setelah label kampus dikoreksi. Semua angka berasal dari run di `runs/baseline/eval-v2/` dan dari berkas di `data/audit-kampus/`.
+Ditulis untuk: Mufid dan tim JalanKu yang perlu membaca hasil baseline setelah label kampus dikoreksi. Semua angka berasal dari run di `runs/baseline/eval-v2/` dan dari berkas di `data/audit-kampus/`.
 
 ## Ringkasan
-- Label kampus (train dan val) diperiksa terhadap aturan tertulis R1-R7 (`docs/kelas.md` v1.6). **155 kotak dihapus dari 75 file JSON** (val 66, train 89), dan Jeka menambah 8 label yang kurang.
+- Label kampus (train dan val) diperiksa terhadap aturan tertulis R1-R7 (`docs/kelas.md` v1.6). **155 kotak dihapus dari 75 file JSON** (val 66, train 89), Mufid menambah 8 label yang kurang.
 - **Modelnya tidak berubah.** Bobot `kotak-gabung_best.pt` dan `kotak-kampus_best.pt` sama persis (hash identik) dengan yang dilatih di baseline; yang berubah hanya ground truth val. Bobot itu dilatih pada label train v1, yang masih memuat inkonsistensi yang sama.
 - mAP50 `kotak-gabung` pada val naik dari 0.455 (v1) menjadi 0.498 (v2), mAP50-95 dari 0.263 menjadi 0.296. **Aturan R4 (ambang ukuran) saja, ditambahkan di atas aturan lain, menyumbang +0.026 mAP50 (61% dari kenaikan) dan +0.023 mAP50-95 (71%).**
 - Kenaikan itu terutama **koreksi label, bukan perbaikan model**. Contohnya pilar: dari 23 kotak pilar val yang dihapus (R1 dan R7), model tidak pernah menemukan satupun di v1.
@@ -30,9 +30,9 @@ Tidak dibuka ulang: barisan motor dan kursi yang rapat di latar sengaja tidak di
 
 ## 3. Cara kerja
 1. `tools/audit_label_kampus.py` (hanya membaca): cek ukuran R4, duplikat IoU > 0.9, titik di luar gambar; review visual 60 contact sheet pilar, orang, dan tanaman_pot per lokasi (val dulu); petunjuk model (val saja) dari `galat.json`.
-2. Setiap usul memakai nama aturan. Yang tidak yakin ditandai "ragu" dan diputuskan Jeka per ID di CHECKPOINT A1; yang tidak tercakup aturan masuk daftar keputusan Jeka. Tidak ada label val yang diubah demi skor.
+2. Setiap usul memakai nama aturan. Yang tidak yakin ditandai "ragu" dan diputuskan Mufid per ID di CHECKPOINT A1; yang tidak tercakup aturan masuk daftar keputusan Mufid. Tidak ada label val yang diubah demi skor.
 3. Penghapusan (`--terapkan`): tiap shape diverifikasi (kelas, bbox, hash titik) sebelum dihapus; format JSON X-AnyLabeling dipertahankan byte demi byte; cadangan di `data/pilot-v2-tune/sebelum-audit/`.
-4. Jeka menambah 8 label kurang di X-AnyLabeling (4 dari tahap A dan 4 kerucut di dapsut); semuanya diperiksa ulang (label valid, bbox sesuai, R4 lolos) dan `tools/validasi_pilot_v2.py` lolos (0 error).
+4. Mufid menambah 8 label kurang di X-AnyLabeling (4 dari tahap A dan 4 kerucut di dapsut); semuanya diperiksa ulang (label valid, bbox sesuai, R4 lolos) dan `tools/validasi_pilot_v2.py` lolos (0 error).
 5. Dataset dibangun ulang sebagai versi baru; dataset lama dan `runs/baseline/eval/` tidak diubah.
 
 ## 4. Apa yang berubah
@@ -50,7 +50,7 @@ Tidak dibuka ulang: barisan motor dan kursi yang rapat di latar sengaja tidak di
 | R7 | pilar 6, tanaman_pot 1 | pilar 4 | 11 |
 | **Total** | **66** | **89** | **155** |
 
-`KJ` = satu keputusan Jeka tanpa aturan tertulis (kotak tanaman_pot di sudut tembok hitam, `jalanan-ubm_..._mata_t0029031#0`). Daftar lengkap per ID: `data/audit-kampus/diterapkan.csv`; bukti sebelum/sesudah: `data/audit-kampus/sebelum_sesudah/`.
+`KJ` = satu keputusan Mufid tanpa aturan tertulis (kotak tanaman_pot di sudut tembok hitam, `jalanan-ubm_..._mata_t0029031#0`). Daftar lengkap per ID: `data/audit-kampus/diterapkan.csv`; bukti sebelum/sesudah: `data/audit-kampus/sebelum_sesudah/`.
 
 ### 4.2 Jumlah instance kotak per kelas
 Dihitung dari file label (kampus; tangga digabung satu kotak per frame). v2-noR4 = semua perubahan kecuali R4.
@@ -85,10 +85,10 @@ Dihitung dari file label (kampus; tangga digabung satu kotak per frame). v2-noR4
 
 Dataset gabung (kampus x4 + publik): train 15450 kotak (v1) menjadi 15094 (v2); val sama dengan val kampus. Bagian publik **identik byte demi byte** dengan v1: 2300 gambar dan 2300 file label, `sumber.csv` bagian publik, dan `kotak_akhir.csv` (11.847 baris) sama persis. Validasi Ultralytics `YOLODataset`: 0 gambar korup di `dataset-kampus-kotak-v2` (train 195, val 54), `dataset-kampus-kotak-v2-noR4` (195, 54), `dataset-kampus-seg-v2` (195, 54), `dataset-gabung-kotak-v2` (train 3080, val 54), dan `dataset-gabung-seg-v2` (195, 54); jumlah instance per kelas dari Ultralytics sama dengan tabel di atas (untuk gabung train, Ultralytics membuang label ganda pada beberapa gambar publik, sama seperti v1).
 
-### 4.3 Perubahan di val yang dikerjakan Jeka setelah daftar audit
+### 4.3 Perubahan di val yang dikerjakan Mufid setelah daftar audit
 - 4 pilar dari tahap A dan 4 kerucut ditambah sebagai label kurang: 7 pilar dan 1 orang (`perpus-lt9..._dada_t0004999`, blind). Model menemukan 3 dari 7 pilar baru pada `kotak-gabung` dan 1 pada `kotak-kampus`.
-- **Koreksi R6 oleh Jeka (disengaja):** pada `dapsut_02_dada_t0060020` dan `dapsut_02_mata_t0057020`, satu kotak kendaraan lama menutupi dua mobil. Jeka memangkas kotak itu dan menambah satu kotak kendaraan untuk mobil di sebelahnya, sehingga satu objek satu kotak (R6). Jumlah kendaraan val: 108 menjadi 108 (R4 membuang 2, dua kotak hasil pemecahan menambah 2).
-- `dapsut_01_dada_t0044026`: polygon `jalur_jalan` digambar ulang (23 titik, satu titik bergeser hingga 80 px, IoU mask v1 vs v2 = 0,988). Perubahan ini dipertahankan (keputusan Jeka). Ini **satu-satunya perubahan label segmentasi**, dan bukan bagian audit; karena itu label seg tidak persis identik dengan v1 (248 dari 249 file identik). Evaluasi segmentasi tidak diulang: perubahannya satu polygon di satu frame val (selisih luas sekitar 1%), di luar tujuan audit.
+- **Koreksi R6 oleh Mufid (disengaja):** pada `dapsut_02_dada_t0060020` dan `dapsut_02_mata_t0057020`, satu kotak kendaraan lama menutupi dua mobil. Mufid memangkas kotak itu dan menambah satu kotak kendaraan untuk mobil di sebelahnya, sehingga satu objek satu kotak (R6). Jumlah kendaraan val: 108 menjadi 108 (R4 membuang 2, dua kotak hasil pemecahan menambah 2).
+- `dapsut_01_dada_t0044026`: polygon `jalur_jalan` digambar ulang (23 titik, satu titik bergeser hingga 80 px, IoU mask v1 vs v2 = 0,988). Perubahan ini dipertahankan (keputusan Mufid). Ini **satu-satunya perubahan label segmentasi**, dan bukan bagian audit; karena itu label seg tidak persis identik dengan v1 (248 dari 249 file identik). Evaluasi segmentasi tidak diulang: perubahannya satu polygon di satu frame val (selisih luas sekitar 1%), di luar tujuan audit.
 
 ## 5. Evaluasi ulang bobot yang sama (tanpa retraining)
 Bobot: `models/baseline/kotak-gabung_best.pt` dan `kotak-kampus_best.pt`. Val: kampus val v1 (319 instance), v2-noR4 (297), v2 (263). mAP dihitung pada conf 0.001; P, R, F1 pada conf yang memaksimalkan F1 rata-rata kelas; galat pada conf 0.25 dan IoU 0.5 (cara `tools/evaluasi_baseline.py`). Run v1 diulang di `eval-v2/v1/` dan **cocok dengan `runs/baseline/eval/` sampai 4 desimal** (mAP50, mAP50-95, P, R untuk ketiga model), jadi selisihnya murni dari ground truth.

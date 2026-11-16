@@ -51,7 +51,7 @@ Cara mengukur:
 
 Margin derau: dua training identik yang hanya berbeda seed berselisih F1 0,034 di val. Selisih di bawah itu tidak dianggap perbaikan. Dengan ukuran ini, ronde 3 dan seluruh ronde 4 (resolusi 1280, 142 frame kampus tambahan) **tidak menghasilkan perbaikan yang terukur** pada model tunggal.
 
-Protokol kecepatan C2: pengukuran pertama (laptop mode Balance, banyak aplikasi) memberi 80,5 ms per frame, di atas batas 60 ms. Jeka memutuskan pengukuran ulang **satu kali dan mengikat** dengan kondisi yang ditulis dulu (charger, mode Performance, laptop diam 5 menit, metode sama dengan `kecepatan.json`). Hasil: C2 ujung ke ujung median **49,5 ms** (model 48,4 + WBF 0,8; p95 56,6 ms); `r2-kotak-v3-960` sendiri 10,6 ms. Lolos. Penyimpangan tercatat: beberapa jendela aplikasi masih terbuka (hanya bisa memperlambat). Ini kecepatan GPU laptop (RTX 4060), bukan HP dan bukan server app; C2 sekitar 4,7 kali lebih lambat dari satu model.
+Protokol kecepatan C2: pengukuran pertama (laptop mode Balance, banyak aplikasi) memberi 80,5 ms per frame, di atas batas 60 ms. Mufid memutuskan pengukuran ulang **satu kali dan mengikat** dengan kondisi yang ditulis dulu (charger, mode Performance, laptop diam 5 menit, metode sama dengan `kecepatan.json`). Hasil: C2 ujung ke ujung median **49,5 ms** (model 48,4 + WBF 0,8; p95 56,6 ms); `r2-kotak-v3-960` sendiri 10,6 ms. Lolos. Penyimpangan tercatat: beberapa jendela aplikasi masih terbuka (hanya bisa memperlambat). Ini kecepatan GPU laptop (RTX 4060), bukan HP dan bukan server app; C2 sekitar 4,7 kali lebih lambat dari satu model.
 
 ## 3. Hasil kotak di test (91 frame, 237 kotak)
 

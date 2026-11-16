@@ -93,7 +93,7 @@ Pemetaan 20 kelas yang terlihat:
 
 - 2.208 gambar, foto kamera HP di jalur pejalan kaki jalanan India.
 - Versi yang dipakai: v11 (2023-10-16), tanpa augmentasi. Versi terbaru (v16) tidak dipakai karena bagian train-nya digandakan oleh augmentasi (5.080 gambar). Split bawaan v11: train 2.540, valid 296, test 0 (total 2.836 gambar). Angka 2.208 di atas adalah jumlah di tab Images halaman project, selisihnya dengan v11 belum dijelaskan.
-- Kelas di `data.yaml` v11 (nc 7, ID 0-6): dog, pole, signboard, stairs, tree, two-wheeler, vehicle. Catatan: `data.yaml` hasil download ini menyebut project ID `obstacle-detection-bgabd`, yang sama dengan salinan di daftar peringatan di bawah. Yang kita unduh tetap dari halaman `unstructured-road-obstacle-detection` (v11, jumlah gambar cocok), jadi kemungkinan itu cuma ID internal project yang sama. Perlu dikonfirmasi ke Jeka.
+- Kelas di `data.yaml` v11 (nc 7, ID 0-6): dog, pole, signboard, stairs, tree, two-wheeler, vehicle. Catatan: `data.yaml` hasil download ini menyebut project ID `obstacle-detection-bgabd`, yang sama dengan salinan di daftar peringatan di bawah. Yang kita unduh tetap dari halaman `unstructured-road-obstacle-detection` (v11, jumlah gambar cocok), jadi kemungkinan itu cuma ID internal project yang sama. Perlu dikonfirmasi ke Mufid.
 - **Jangan dicampur dengan project lain yang mirip**: `mtechcv/obstacle-detection-bgabd` dan `unstructuredroadobstacles/unstructured-road-obstacles` (6.156 gambar, nama kelasnya juga rusak). Keduanya kemungkinan versi lain dari data yang sama dan bisa bikin gambar dobel.
 
 | Kelas Unstructured Road | Kelas JalanKu |
