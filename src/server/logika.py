@@ -1,6 +1,9 @@
 from collections import deque
 
 
+PESAN_JALUR_TIDAK_TERLIHAT = "Hati-hati, jalur tidak terlihat"
+
+
 class MesinLogika:
     def __init__(self, config):
         self.config = config
@@ -8,6 +11,14 @@ class MesinLogika:
         stabil = config.get("stabil", {})
         self.jendela_stabil = stabil.get("jendela", 3)
         self.minimal_stabil = stabil.get("minimal", 2)
+
+        # Peringatan "jalur tidak terlihat": harus N frame BERURUTAN tanpa keluaran seg
+        self.seg_kosong_minimal = config.get("seg_kosong_minimal", 3)
+        if not 1 <= self.seg_kosong_minimal <= self.jendela_stabil:
+            raise ValueError(
+                f"seg_kosong_minimal ({self.seg_kosong_minimal}) harus 1.."
+                f"stabil.jendela ({self.jendela_stabil})"
+            )
 
         self.riwayat_frame = {}
         self.riwayat_seg = {}
@@ -202,10 +213,18 @@ class MesinLogika:
           distabilkan), atau None
         """
 
-        # Tidak ada keluaran seg sama sekali (kamera ke langit-langit,
-        # gelap): tidak_jelas dan TANPA peringatan.
+        # Tidak ada keluaran seg sama sekali (kamera menempel tembok/pintu,
+        # gelap, ke langit-langit): tidak_jelas + kandidat peringatan.
+        # Kandidat ini hanya keluar kalau kosong N frame berturut-turut
+        # (lihat stabilkan_seg).
         if mask_seg is None or len(mask_seg) == 0:
-            return {"status": "tidak_jelas", "persen_jalan": 0.0}, None
+            return {"status": "tidak_jelas", "persen_jalan": 0.0}, {
+                "pesan": PESAN_JALUR_TIDAK_TERLIHAT,
+                "kelas": "jalur_jalan",
+                "posisi": "tengah",
+                "jarak": "dekat",
+                "tingkat": 2,
+            }
 
         tinggi, lebar = mask_seg.shape[1:]
 
@@ -266,13 +285,29 @@ class MesinLogika:
         }, kandidat
 
     def stabilkan_seg(self, kandidat, sesi_id="default"):
-        """Peringatan seg hanya keluar kalau muncul minimal N dari N frame terakhir."""
+        """
+        Peringatan seg hanya keluar kalau muncul minimal N dari N frame terakhir.
+
+        Riwayat dikunci per PESAN (bukan kelas): "Jalur terhalang" dan
+        "jalur tidak terlihat" sama-sama berkelas jalur_jalan tapi tidak
+        boleh saling membantu. "Jalur tidak terlihat" lebih ketat: semua
+        seg_kosong_minimal frame terakhir harus kosong tanpa jeda.
+        """
 
         riwayat = self._riwayat(self.riwayat_seg, sesi_id)
-        kunci = kandidat["kelas"] if kandidat else None
+        kunci = kandidat["pesan"] if kandidat else None
         riwayat.append(kunci)
 
         if kandidat is None:
+            return None
+
+        if kunci == PESAN_JALUR_TIDAK_TERLIHAT:
+            n = self.seg_kosong_minimal
+            terakhir = list(riwayat)[-n:]
+
+            if len(terakhir) == n and all(k == kunci for k in terakhir):
+                return kandidat
+
             return None
 
         if sum(1 for k in riwayat if k == kunci) >= self.minimal_stabil:
