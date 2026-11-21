@@ -17,8 +17,18 @@ const ctx = overlay.getContext("2d");
 const LEBAR_KIRIM = 640;
 const KUALITAS_JPEG = 0.7;
 const MODE_MOCK = new URLSearchParams(location.search).get("mock") === "1";
-const WARNA = { 0: "#1b7f3b", 1: "#1565c0", 2: "#f9a825", 3: "#c62828" };
-const IKON = { 0: "✔", 1: "ℹ", 2: "⚠", 3: "⛔" };
+const WARNA = { 0: "#14773A", 1: "#1565C0", 2: "#F5C400", 3: "#C62828" };
+// Ikon SVG konstan (bukan data pengguna), warna ikut teks lewat currentColor.
+const SVG_IKON =
+  '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">';
+const IKON = {
+  0: SVG_IKON + '<path d="M4.5 12.5l5 5L19.5 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  1: SVG_IKON + '<circle cx="12" cy="12" r="9.5" stroke="currentColor" stroke-width="2.5"/><path d="M12 11v6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><circle cx="12" cy="7.5" r="1.5" fill="currentColor"/></svg>',
+  2: SVG_IKON + '<path d="M12 3.5L21.5 20H2.5L12 3.5Z" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/><path d="M12 10v4.5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><circle cx="12" cy="17.2" r="1.4" fill="currentColor"/></svg>',
+  3: SVG_IKON + '<circle cx="12" cy="12" r="9.5" stroke="currentColor" stroke-width="2.5"/><path d="M7.5 12h9" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>',
+};
+const UKURAN_JUDUL = 26;
+const UKURAN_JUDUL_MIN = 16;
 
 let jedaKirimMs = 200; // jeda MINIMUM antar pengiriman
 let stream = null;
@@ -36,11 +46,44 @@ let hitungTidakTerbuka = 0;
 // --- Status dan zona ---
 function setStatus(teks, tingkat, detail) {
   statusTeks.textContent = teks;
-  statusIkon.textContent = tingkat === null ? "" : IKON[tingkat];
+  statusIkon.innerHTML = tingkat === null ? "" : IKON[tingkat];
   status.className = tingkat === null ? "" : "t" + tingkat;
+  status.classList.toggle("dua-baris", teks.startsWith("Kamera gagal:"));
   statusDetail.textContent = detail || "";
   statusDetail.hidden = !detail;
+  pasJudul();
+  requestAnimationFrame(pasJudul); // ukur ulang sesudah tata letak selesai
 }
+
+// Judul status satu baris: mulai 26px, kecilkan 1px sampai muat (min 16px).
+function pasJudul() {
+  statusTeks.style.fontSize = "";
+  if (status.classList.contains("dua-baris")) return;
+  let ukuran = UKURAN_JUDUL;
+  while (judulMeluap() && ukuran > UKURAN_JUDUL_MIN) {
+    ukuran -= 1;
+    statusTeks.style.fontSize = ukuran + "px";
+  }
+}
+
+// scrollWidth/clientWidth dibulatkan ke px bulat, jadi luapan di bawah 1px
+// lolos (dan elipsis tetap muncul). Bandingkan juga lebar pecahan teks.
+function judulMeluap() {
+  if (statusTeks.scrollWidth > statusTeks.clientWidth) return true;
+  const rentang = document.createRange();
+  rentang.selectNodeContents(statusTeks);
+  const lebarTeks = rentang.getBoundingClientRect().width;
+  return lebarTeks > statusTeks.getBoundingClientRect().width + 0.01;
+}
+
+// Lebar kartu berubah (rotasi, ukuran jendela, DevTools): ukur ulang judul.
+let lebarStatus = 0;
+new ResizeObserver((entri) => {
+  const lebar = entri[0].contentRect.width;
+  if (lebar === lebarStatus) return; // abaikan perubahan tinggi saja
+  lebarStatus = lebar;
+  pasJudul();
+}).observe(status);
 
 function setZona(posisi, tingkat) {
   for (const z of zonaEl.children) {
@@ -57,19 +100,24 @@ function sesuaikanOverlay() {
 function garisZona() {
   // Sebelum kamera jalan, ukuran video belum diketahui: jangan gambar garis.
   if (!kamera.videoWidth || !kamera.videoHeight) return;
-  const H = overlay.height;
+  // Garis hanya di area kamera yang bersih: 16px di bawah blok atas
+  // sampai 12px di atas tombol kecil (overlay dalam px CSS).
+  const yAtas = document.getElementById("atas").getBoundingClientRect().bottom + 16;
+  const yBawah =
+    document.getElementById("baris-kecil").getBoundingClientRect().top - 12;
+  if (yBawah <= yAtas) return;
   // Zona server: kiri 30% / tengah 40% / kanan 30% dari lebar GAMBAR.
   const x1 = petaKotak([0.3, 0, 0.3, 1])[0];
   const x2 = petaKotak([0.7, 0, 0.7, 1])[0];
   ctx.save();
-  ctx.strokeStyle = "rgba(255,255,255,0.45)";
-  ctx.lineWidth = 2;
-  ctx.setLineDash([10, 10]);
+  ctx.strokeStyle = "rgba(255,255,255,0.4)";
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([6, 8]);
   ctx.beginPath();
-  ctx.moveTo(x1, 0);
-  ctx.lineTo(x1, H);
-  ctx.moveTo(x2, 0);
-  ctx.lineTo(x2, H);
+  ctx.moveTo(x1, yAtas);
+  ctx.lineTo(x1, yBawah);
+  ctx.moveTo(x2, yAtas);
+  ctx.lineTo(x2, yBawah);
   ctx.stroke();
   ctx.restore();
 }
@@ -127,7 +175,7 @@ function gambarOverlay(balasan) {
 
     // label berbentuk pil
     const teks = o.kelas + " " + Math.round(o.conf * 100) + "%";
-    ctx.font = "bold 18px sans-serif";
+    ctx.font = "700 18px 'Plus Jakarta Sans', sans-serif";
     const lebar = ctx.measureText(teks).width + 16;
     const yLabel = Math.max(y1 - 30, 0);
     jalurBulat(x1, yLabel, lebar, 26, 8);
@@ -360,6 +408,12 @@ window.addEventListener("resize", () => {
   sesuaikanOverlay();
   if (!stream) bersihkanOverlay();
 });
+
+// Lebar judul berubah begitu font lokal selesai dimuat: ukur ulang.
+if (document.fonts) {
+  document.fonts.ready.then(pasJudul);
+  document.fonts.addEventListener("loadingdone", pasJudul);
+}
 
 tombolMulai.addEventListener("click", () => {
   if (stream) {
