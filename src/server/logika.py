@@ -1,3 +1,4 @@
+import time
 from collections import deque
 
 
@@ -34,8 +35,16 @@ class MesinLogika:
         # Aturan B: objek "jauh" tidak jadi peringatan kalau seg kosong di frame ini
         self.jauh_butuh_seg = bool(config.get("jauh_butuh_seg", False))
 
+        # Aturan v1.1 A: tahan peringatan objek tengah+dekat sekian ms (0 = mati, perilaku v1)
+        self.tahan_dekat_ms = float(config.get("tahan_dekat_ms", 0))
+        # Aturan v1.1 B: objek kiri/kanan dibatasi tingkatnya (3 = mati, perilaku v1),
+        # kecuali kotaknya masuk ke zona tengah minimal sekian bagian lebar gambar
+        self.samping_maks_tingkat = int(config.get("samping_maks_tingkat", 3))
+        self.samping_masuk_tengah_min = float(config.get("samping_masuk_tengah_min", 0.10))
+
         self.riwayat_frame = {}
         self.riwayat_seg = {}
+        self.dekat_terakhir = {}  # sesi -> (waktu_s, peringatan) objek tengah+dekat terakhir
 
         # Ambang skor -> tingkat (kunci YAML bisa int atau str)
         ambang = {
@@ -118,7 +127,14 @@ class MesinLogika:
 
         return "jauh"
 
-    def hitung_bahaya(self, kelas, posisi, jarak):
+    def masuk_tengah(self, kotak):
+        """Lebar bagian kotak yang berada di zona tengah (fraksi lebar gambar)."""
+
+        lebar_zona = self.config.get("zona_tengah", 0.40)
+        kiri, kanan = 0.5 - lebar_zona / 2, 0.5 + lebar_zona / 2
+        return max(0.0, min(kotak[2], kanan) - max(kotak[0], kiri))
+
+    def hitung_bahaya(self, kelas, posisi, jarak, kotak=None):
         """
         Menghitung skor bahaya berdasarkan:
         - Bobot kelas objek
@@ -142,6 +158,15 @@ class MesinLogika:
             if skor >= batas:
                 tingkat = nilai_tingkat
                 break
+
+        # Aturan v1.1 B: benda di samping jalur tidak sampai merah, kecuali
+        # kotaknya cukup masuk ke zona tengah (bisa menyenggol bahu).
+        if (
+            posisi in ("kiri", "kanan")
+            and tingkat > self.samping_maks_tingkat
+            and (kotak is None or self.masuk_tengah(kotak) < self.samping_masuk_tengah_min)
+        ):
+            tingkat = self.samping_maks_tingkat
 
         peringatan_aktif = (
             posisi == "tengah" or jarak == "dekat"
@@ -171,6 +196,7 @@ class MesinLogika:
                 kelas,
                 posisi,
                 jarak,
+                kotak,
             )
 
             hasil.append({
@@ -200,9 +226,12 @@ class MesinLogika:
         if not kandidat:
             return None
 
+        # (tingkat, skor): sama dengan skor saja selama tingkat naik bersama skor
+        # (perilaku v1); dengan aturan B, objek samping yang dibatasi tidak
+        # boleh mengalahkan objek tengah bertingkat lebih tinggi.
         objek_terpilih = max(
             kandidat,
-            key=lambda objek: objek["skor"],
+            key=lambda objek: (objek["tingkat"], objek["skor"]),
         )
 
         return {
@@ -394,11 +423,43 @@ class MesinLogika:
 
         return objek_stabil
 
-    def proses(self, hasil_deteksi, sesi_id='default'):
+    def tahan_dekat(self, peringatan, sesi_id, waktu_s):
+        """
+        Aturan v1.1 A: kalau frame ini tanpa peringatan tetapi <= tahan_dekat_ms
+        yang lalu ada peringatan OBJEK tengah+dekat, ulangi peringatan itu.
+        Hanya peringatan objek asli yang mengisi ulang waktu (hasil tahanan tidak),
+        jadi tahanan tidak bisa memperpanjang dirinya sendiri.
+        """
+
+        if self.tahan_dekat_ms <= 0:
+            return peringatan
+
+        if peringatan is not None:
+            if peringatan.get("_objek") and peringatan["posisi"] == "tengah" and peringatan["jarak"] == "dekat":
+                if sesi_id not in self.dekat_terakhir:
+                    maks = self.config.get("maks_sesi", 200)
+                    while len(self.dekat_terakhir) >= maks:
+                        self.dekat_terakhir.pop(next(iter(self.dekat_terakhir)))
+                self.dekat_terakhir[sesi_id] = (waktu_s, dict(peringatan))
+            return peringatan
+
+        simpan = self.dekat_terakhir.get(sesi_id)
+        if simpan is not None and 0 <= (waktu_s - simpan[0]) * 1000 <= self.tahan_dekat_ms:
+            return dict(simpan[1])
+
+        return None
+
+    def proses(self, hasil_deteksi, sesi_id='default', waktu_s=None):
         """
         Menggabungkan analisis objek dan jalur
         menjadi output navigasi JalanKu.
+
+        waktu_s: waktu frame (detik) untuk aturan tahan_dekat_ms;
+        None -> time.monotonic().
         """
+
+        if waktu_s is None:
+            waktu_s = time.monotonic()
 
         hasil_objek = self.analisis_objek(
             hasil_deteksi["objek"]
@@ -429,6 +490,9 @@ class MesinLogika:
 
         peringatan_seg = self.stabilkan_seg(kandidat_seg, sesi_id)
 
+        if peringatan is not None:
+            peringatan["_objek"] = True  # penanda internal untuk aturan A, dibuang di bawah
+
         # SATU peringatan: tingkat tertinggi; seri -> objek kotak
         # (lebih spesifik daripada peringatan seg).
         if peringatan_seg is not None and (
@@ -436,6 +500,10 @@ class MesinLogika:
             or peringatan_seg["tingkat"] > peringatan["tingkat"]
         ):
             peringatan = peringatan_seg
+
+        peringatan = self.tahan_dekat(peringatan, sesi_id, waktu_s)
+        if peringatan is not None:
+            peringatan.pop("_objek", None)
 
         objek_api = [
             {

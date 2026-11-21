@@ -94,3 +94,9 @@ seg_kosong_minimal: 3          # seg kosong N frame berturut-turut -> "Hati-hati
 # Kembali ke perilaku lama: seg_tangga_stabil_minimal: 2 dan jauh_butuh_seg: false
 seg_tangga_stabil_minimal: 3   # "Tangga di depan" (seg) harus jadi kandidat di minimal N dari stabil.jendela frame (<= stabil.jendela; 2 = lama)
 jauh_butuh_seg: true           # true = objek kotak "jauh" tidak jadi peringatan saat seg tidak mengeluarkan mask sama sekali di frame itu
+
+# Aturan v1.1, dipilih dari ablasi 19 Nov (data/aturan-v1-1/hasil_ablasi.md; A menyimpang dari aturan pemilihan, lihat bagian 6).
+# Kembali ke perilaku v1 (v1-demo): tahan_dekat_ms: 0 dan samping_maks_tingkat: 3 (dan di src/web/suara.js jedaSampingMs: 0)
+tahan_dekat_ms: 1500             # A: peringatan objek "di depan, dekat" diulang sampai N ms sesudah hilang (0 = mati); tidak memperpanjang diri
+samping_maks_tingkat: 2          # B: objek kiri/kanan paling tinggi tingkat ini (3 = mati) ...
+samping_masuk_tengah_min: 0.15   # ... kecuali kotaknya masuk zona tengah >= bagian lebar gambar ini (tetap tingkat normal)
