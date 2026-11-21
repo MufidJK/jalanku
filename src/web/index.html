@@ -63,12 +63,19 @@
       </label>
     </div>
 
+    <button id="tombol-mode-suara" aria-label="Mode suara: layar gelap, peringatan lewat suara dan getar"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><path d="M3.5 9.5h3.5L11.5 5.5v13L7 14.5H3.5z" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 9a4.2 4.2 0 0 1 0 6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M18 6.2a8.2 8.2 0 0 1 0 11.6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Mode suara</button>
     <div id="baris-kecil">
       <button id="tombol-bisu" aria-pressed="false">Bisu</button>
       <button id="tombol-atur" aria-expanded="false">Atur</button>
     </div>
     <button id="tombol-mulai">Mulai</button>
   </main>
+
+  <!-- Di luar main: main dibuat inert selama mode suara -->
+  <div id="layar-suara" hidden role="button" tabindex="0" aria-label="Mode suara aktif. Tekan lama dua detik untuk keluar.">
+    <span aria-hidden="true">Mode suara aktif</span>
+    <span id="teks-tahan" aria-hidden="true">Tekan lama 2 detik untuk keluar</span>
+  </div>
 
   <script src="mock.js"></script>
   <script src="suara.js"></script>

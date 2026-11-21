@@ -81,9 +81,10 @@ body {
   align-items: center;
   justify-content: center;
   gap: 16px;
-  /* Pusatkan di antara kartu status dan dua baris tombol, bukan layar penuh */
+  /* Pusatkan di antara kartu status dan tiga baris tombol, bukan layar penuh
+     (276 = puncak tombol Mode suara 260 + jarak 16) */
   padding: calc(env(safe-area-inset-top, 0px) + 96px) 32px
-    calc(env(safe-area-inset-bottom, 0px) + 200px);
+    calc(env(safe-area-inset-bottom, 0px) + 276px);
   text-align: center;
   background: var(--latar);
 }
@@ -295,6 +296,29 @@ input:focus-visible {
   background: var(--permukaan);
   color: var(--teks);
 }
+/* Mode suara: hanya di layar awal, tepat di atas Bisu/Atur dengan jarak 12px
+   (120 + 64 + 12). Tanpa garis kuning (= aktif) dan tanpa isi kuning (= Mulai). */
+#tombol-mode-suara {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(196px + env(safe-area-inset-bottom, 0px));
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px; /* ikon speaker + teks dalam satu baris */
+  height: 64px;
+  font-size: 22px;
+  font-weight: 700;
+  border: none;
+  border-radius: var(--radius-kecil);
+  background: var(--permukaan);
+  color: var(--teks);
+}
+#tombol-mode-suara svg { flex: none; }
+#tombol-mode-suara[hidden] { display: none; }
+
 /* Bisu menyala / panel Atur terbuka: garis kuning, bukan merah */
 #tombol-bisu.aktif,
 #tombol-atur[aria-expanded="true"] {
@@ -341,6 +365,33 @@ input:focus-visible {
   accent-color: var(--kuning);
   cursor: pointer;
 }
+
+/* Lapisan mode suara: hitam murni (piksel AMOLED mati), menutupi video
+   tanpa menghentikannya. Satu baris redup untuk pendamping yang melihat. */
+#layar-suara {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 32px;
+  background: #000;
+  color: #6B6B6B; /* sekitar 3,9:1 di atas hitam: terbaca pendamping di luar ruangan */
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-align: center;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+#layar-suara[hidden] { display: none; }
+/* Lapisan selebar layar: cincin fokus tidak menambah informasi */
+#layar-suara:focus { outline: none; }
 
 @media (prefers-reduced-motion: reduce) {
   #status.t3 { animation: none; }
