@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>JalanKu spike HP</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 8px; background: #111; color: #eee; font: 14px/1.35 system-ui, sans-serif; }
+  h1 { font-size: 16px; margin: 0 0 6px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 6px; }
+  select, button { font-size: 15px; padding: 6px 10px; }
+  button.go { background: #1b8a3a; color: #fff; border: 0; border-radius: 4px; }
+  button.go.on { background: #b3261e; }
+  #stage { position: relative; width: 100%; max-width: 480px; background: #000; }
+  #stage video, #stage canvas { display: block; width: 100%; height: auto; }
+  #stage canvas { position: absolute; inset: 0; }
+  #stats { font: 13px/1.5 ui-monospace, Consolas, monospace; white-space: pre; margin: 6px 0; }
+  #fps { font-size: 22px; font-weight: bold; color: #7fe08f; }
+  #out { width: 100%; height: 5em; font: 11px ui-monospace, Consolas, monospace; background: #222; color: #ccc; border: 1px solid #444; }
+  #msg { color: #ffb86b; min-height: 1.3em; }
+</style>
+</head>
+<body>
+<h1>JalanKu spike HP (onnxruntime-web, model di browser)</h1>
+<div class="row">
+  <label>imgsz
+    <select id="sz"><option>320</option><option>416</option><option>640</option></select>
+  </label>
+  <label>backend
+    <select id="be"><option value="auto">auto (webgpu → wasm)</option><option value="webgpu">webgpu saja</option><option value="wasm">wasm saja</option></select>
+  </label>
+  <label><input type="checkbox" id="useBox" checked> box</label>
+  <label><input type="checkbox" id="useSeg" checked> seg</label>
+  <button id="go" class="go">Start</button>
+  <button id="copy">Copy results</button>
+</div>
+<div id="msg"></div>
+<div id="stage"><video id="vid" playsinline muted autoplay></video><canvas id="ov"></canvas></div>
+<div><span id="fps">- fps</span></div>
+<div id="stats">belum jalan</div>
+<textarea id="out" readonly placeholder="baris hasil muncul di sini (tombol Copy results)"></textarea>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/ort.webgpu.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
