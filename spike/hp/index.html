@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>JalanKu spike HP</title>
+<title>JalanKu ukur HP</title>
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; padding: 8px; background: #111; color: #eee; font: 14px/1.35 system-ui, sans-serif; }
@@ -22,13 +22,22 @@
 </style>
 </head>
 <body>
-<h1>JalanKu spike HP (onnxruntime-web, model di browser)</h1>
+<h1>JalanKu Tahap 5a: ukur kecepatan di HP (onnxruntime-web)</h1>
 <div class="row">
   <label>imgsz
     <select id="sz"><option>320</option><option>416</option><option>640</option></select>
   </label>
+  <label>presisi
+    <select id="prec"><option value="fp32">fp32</option><option value="fp16">fp16</option></select>
+  </label>
+  <label>seg tiap N frame
+    <select id="segN"><option>1</option><option selected>2</option><option>3</option></select>
+  </label>
   <label>backend
-    <select id="be"><option value="auto">auto (webgpu → wasm)</option><option value="webgpu">webgpu saja</option><option value="wasm">wasm saja</option></select>
+    <select id="be"><option value="webgpu">webgpu saja</option><option value="auto">auto (webgpu, lalu wasm)</option><option value="wasm">wasm saja</option></select>
+  </label>
+  <label>preprocess
+    <select id="pre"><option value="webgl">webgl</option><option value="2d">2d</option></select>
   </label>
   <label><input type="checkbox" id="useBox" checked> box</label>
   <label><input type="checkbox" id="useSeg" checked> seg</label>

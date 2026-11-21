@@ -27,20 +27,27 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, default=ROOT / "models" / "onnx")
     ap.add_argument("--force", action="store_true", help="timpa file .onnx yang sudah ada")
+    ap.add_argument("--fp16", action="store_true",
+                    help="Tahap 5a: ekspor fp16 (quantize=16, pengganti half=True) ke {box,seg}_{320,416}_fp16.onnx. "
+                         "Di CPU Ultralytics mengonversi lewat onnxruntime float16 (keep_io_types: input/output tetap float32). "
+                         "File yang sudah ada TIDAK pernah ditimpa di mode ini.")
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
+    sizes = (416, 320) if a.fp16 else SIZES
+    suffix = "_fp16" if a.fp16 else ""
 
     with tempfile.TemporaryDirectory() as tmp:  # ekspor di folder sementara, bukan di models/ronde2
         for short, pt_name in MODELS:
             pt = Path(tmp) / pt_name
             shutil.copy(SRC / pt_name, pt)
-            for sz in SIZES:
-                dst = a.out / f"{short}_{sz}.onnx"
-                if dst.exists() and not a.force:
+            for sz in sizes:
+                dst = a.out / f"{short}_{sz}{suffix}.onnx"
+                if dst.exists() and (a.fp16 or not a.force):
                     print("sudah ada, lewati:", dst)
                     continue
                 m = YOLO(str(pt))
-                p = m.export(format="onnx", imgsz=sz, dynamic=False, simplify=True, half=False, device="cpu")
+                kw = dict(quantize=16) if a.fp16 else dict(half=False)
+                p = m.export(format="onnx", imgsz=sz, dynamic=False, simplify=True, device="cpu", **kw)
                 shutil.move(p, dst)
                 print("tersimpan:", dst, f"{dst.stat().st_size / 1e6:.2f} MB")
 

@@ -1,6 +1,6 @@
 "use strict";
-// JalanKu spike HP: ukur FPS box + seg (YOLO26n, ONNX) yang jalan di browser HP.
-// Throw-away: bukan app v2. Mask seg TIDAK didekode (itu kerja Stage 3).
+// JalanKu Tahap 5a: halaman UKUR (bukan app). box tiap frame + seg tiap N frame, fp32/fp16, WebGPU (wasm cadangan).
+// Mask seg TIDAK didekode dan logika peringatan TIDAK ada: angka di sini batas bawah biaya per frame.
 
 const ORT_VERSION = "1.31.1";
 const CONF = 0.25;
@@ -8,14 +8,16 @@ const IOU = 0.7;
 const WINDOW = 30; // median dari N frame terakhir
 const BOX_NAMES = ["pilar", "pohon", "tepian", "orang", "tanaman_pot", "kursi", "kendaraan", "tangga"];
 const SEG_NAMES = ["jalur_jalan", "jalan_kendaraan", "tangga"];
+const INV255 = 1 / 255;
 
 const $ = (id) => document.getElementById(id);
-const el = { sz: $("sz"), be: $("be"), useBox: $("useBox"), useSeg: $("useSeg"), go: $("go"),
-  copy: $("copy"), msg: $("msg"), vid: $("vid"), ov: $("ov"), fps: $("fps"), stats: $("stats"), out: $("out") };
+const el = { sz: $("sz"), be: $("be"), prec: $("prec"), segN: $("segN"), pre: $("pre"), useBox: $("useBox"), useSeg: $("useSeg"),
+  go: $("go"), copy: $("copy"), msg: $("msg"), vid: $("vid"), ov: $("ov"), fps: $("fps"), stats: $("stats"), out: $("out") };
 const params = new URLSearchParams(location.search);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const median = (a) => { if (!a.length) return NaN; const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 const fmt = (v, d = 1) => (Number.isFinite(v) ? v.toFixed(d) : "-");
+const errText = (e) => String(e && e.message ? e.message : e).replace(/\s+/g, " ").slice(0, 160);
 
 // ---------- onnxruntime-web ----------
 const isolated = !!self.crossOriginIsolated;
@@ -25,43 +27,149 @@ ort.env.wasm.wasmPaths = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ORT_VER
 ort.env.wasm.numThreads = threads;
 ort.env.wasm.simd = true;
 
+let gpuF16 = null; // adapter WebGPU punya fitur shader-f16? (null = tidak diketahui / tidak ada WebGPU)
+if (navigator.gpu) navigator.gpu.requestAdapter().then((a) => { gpuF16 = a ? a.features.has("shader-f16") : null; }).catch(() => {});
+
 // ---------- state ----------
 let running = false, stream = null, wakeLock = null;
-let loaded = null;   // { key, backend, sessions:{box,seg}, loadMs, warmMs }
-let sample = [];     // satu entri per frame: {pre, box, boxNms, seg, segNms, draw, total, nBox, nSeg, end}
+let loaded = null;   // { key, backend, precRun, precNote, sessions:{box,seg}, loadMs, warmMs }
+let sample = [];     // satu entri per frame
 let lastRes = { w: 0, h: 0 };
-let lastNBox = 0, lastNSeg = 0;
-
-// buffer preprocess (dipakai ulang)
-const lb = document.createElement("canvas");
-const lbCtx = lb.getContext("2d", { willReadFrequently: true });
-let inBuf = null;
-
-function setMsg(t) { el.msg.textContent = t || ""; }
+let lastNBox = 0, lastNSeg = 0, frameIdx = 0, preRun = "-";
 
 // ---------- preprocess: letterbox ala Ultralytics (rasio tetap, pad 114) -> float32 NCHW 0..1 ----------
-function preprocess(video, sz) {
+// Geometri sama persis dengan versi spike pertama: r = min(sz/h, sz/w), offset Math.round((sz - n)/2 - 0.1).
+function geom(w, h, sz) {
+  const r = Math.min(sz / h, sz / w);
+  const nw = Math.round(w * r), nh = Math.round(h * r);
+  return { r, nw, nh, left: Math.round((sz - nw) / 2 - 0.1), top: Math.round((sz - nh) / 2 - 0.1), w, h, sz };
+}
+const P = { g: null, inBuf: null, tensor: null, c2d: null, ctx2d: null, gl: null, px: null };
+
+function ensureBuffers(sz) {
+  if (P.inBuf && P.inBuf.length === 3 * sz * sz) return;
+  P.inBuf = new Float32Array(3 * sz * sz);
+  P.tensor = new ort.Tensor("float32", P.inBuf, [1, 3, sz, sz]); // satu tensor, dipakai ulang tiap frame
+  P.px = new Uint8Array(4 * sz * sz);
+  P.g = null;
+}
+function rgbaToNchw(d, n) {
+  const b = P.inBuf, n2 = 2 * n;
+  for (let i = 0, j = 0; i < n; i++, j += 4) {
+    b[i] = d[j] * INV255;
+    b[n + i] = d[j + 1] * INV255;
+    b[n2 + i] = d[j + 2] * INV255;
+  }
+}
+
+// (a) "lama": kode spike pertama apa adanya (fillRect penuh + getImageData + Tensor baru tiap frame). Hanya ?pre=lama, untuk banding.
+const lamaCv = document.createElement("canvas");
+const lamaCtx = lamaCv.getContext("2d", { willReadFrequently: true });
+let lamaBuf = null;
+function preLama(video, sz) {
   const w = video.videoWidth, h = video.videoHeight;
   const r = Math.min(sz / h, sz / w);
   const nw = Math.round(w * r), nh = Math.round(h * r);
   const left = Math.round((sz - nw) / 2 - 0.1), top = Math.round((sz - nh) / 2 - 0.1);
-  if (lb.width !== sz) { lb.width = sz; lb.height = sz; inBuf = new Float32Array(3 * sz * sz); }
-  lbCtx.fillStyle = "rgb(114,114,114)";
-  lbCtx.fillRect(0, 0, sz, sz);
-  lbCtx.drawImage(video, left, top, nw, nh);
-  const d = lbCtx.getImageData(0, 0, sz, sz).data, n = sz * sz;
+  if (lamaCv.width !== sz) { lamaCv.width = sz; lamaCv.height = sz; lamaBuf = new Float32Array(3 * sz * sz); }
+  lamaCtx.fillStyle = "rgb(114,114,114)";
+  lamaCtx.fillRect(0, 0, sz, sz);
+  lamaCtx.drawImage(video, left, top, nw, nh);
+  const d = lamaCtx.getImageData(0, 0, sz, sz).data, n = sz * sz;
   for (let i = 0, j = 0; i < n; i++, j += 4) {
-    inBuf[i] = d[j] / 255;
-    inBuf[n + i] = d[j + 1] / 255;
-    inBuf[2 * n + i] = d[j + 2] / 255;
+    lamaBuf[i] = d[j] / 255;
+    lamaBuf[n + i] = d[j + 1] / 255;
+    lamaBuf[2 * n + i] = d[j + 2] / 255;
   }
-  return { r, left, top, w, h };
+  return { g: { r, left, top, w, h }, tensor: new ort.Tensor("float32", lamaBuf, [1, 3, sz, sz]) };
+}
+
+// (b) "2d": canvas 2D, pad diisi sekali saat geometri berubah, tensor + buffer float dipakai ulang.
+//     getImageData tetap mengalokasikan satu ImageData per frame (tidak bisa dihindari di API 2D).
+function pre2d(video, sz) {
+  const w = video.videoWidth, h = video.videoHeight;
+  ensureBuffers(sz);
+  if (!P.c2d) { P.c2d = document.createElement("canvas"); P.ctx2d = P.c2d.getContext("2d", { willReadFrequently: true }); }
+  if (!P.g || P.g.w !== w || P.g.h !== h || P.g.sz !== sz || P.g.mode !== "2d") {
+    P.g = { ...geom(w, h, sz), mode: "2d" };
+    P.c2d.width = sz; P.c2d.height = sz;
+    P.ctx2d.fillStyle = "rgb(114,114,114)";
+    P.ctx2d.fillRect(0, 0, sz, sz);
+  }
+  const g = P.g;
+  P.ctx2d.drawImage(video, g.left, g.top, g.nw, g.nh); // hanya area dalam; pad 114 tidak pernah tertimpa
+  rgbaToNchw(P.ctx2d.getImageData(0, 0, sz, sz).data, sz * sz);
+  return { g, tensor: P.tensor };
+}
+
+// (c) "webgl": WebGL2, video -> tekstur (LINEAR) -> quad di viewport letterbox, clear 114 -> readPixels ke Uint8Array yang dipakai ulang.
+//     Tidak ada alokasi per frame.
+function initGL() {
+  const c = document.createElement("canvas");
+  const gl = c.getContext("webgl2", { antialias: false, depth: false, stencil: false, alpha: true, premultipliedAlpha: false,
+    preserveDrawingBuffer: false, powerPreference: "high-performance" });
+  if (!gl) throw new Error("WebGL2 tidak tersedia");
+  const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; };
+  const prog = gl.createProgram();
+  // uv.y = 0 (baris atas video) di bawah framebuffer, karena readPixels membaca dari bawah: hasilnya baris 0 = atas gambar.
+  gl.attachShader(prog, sh(gl.VERTEX_SHADER, `#version 300 es
+    in vec2 p; out vec2 uv; void main() { uv = vec2(p.x * 0.5 + 0.5, p.y * 0.5 + 0.5); gl_Position = vec4(p, 0.0, 1.0); }`));
+  gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, `#version 300 es
+    precision highp float; uniform sampler2D t; in vec2 uv; out vec4 o; void main() { o = vec4(texture(t, uv).rgb, 1.0); }`));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+  gl.useProgram(prog);
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, "p");
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR],
+    [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+  gl.pixelStorei(gl.PACK_ALIGNMENT, 1);
+  gl.clearColor(114 / 255, 114 / 255, 114 / 255, 1);
+  P.gl = { c, gl };
+}
+function preWebgl(video, sz) {
+  const w = video.videoWidth, h = video.videoHeight;
+  ensureBuffers(sz);
+  if (!P.gl) initGL();
+  const { c, gl } = P.gl;
+  if (!P.g || P.g.w !== w || P.g.h !== h || P.g.sz !== sz || P.g.mode !== "webgl") {
+    P.g = { ...geom(w, h, sz), mode: "webgl" };
+    c.width = sz; c.height = sz;
+  }
+  const g = P.g;
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+  gl.viewport(0, 0, sz, sz);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.viewport(g.left, g.top, g.nw, g.nh); // koordinat framebuffer = baris buffer hasil readPixels (sudah dibalik di shader)
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  gl.readPixels(0, 0, sz, sz, gl.RGBA, gl.UNSIGNED_BYTE, P.px);
+  rgbaToNchw(P.px, sz * sz);
+  return { g, tensor: P.tensor };
+}
+
+let preFn = null;
+function pickPre(mode) {
+  if (mode === "lama") { preRun = "lama"; return preLama; }
+  if (mode === "webgl") {
+    try { if (!P.gl) initGL(); preRun = "webgl"; return preWebgl; }
+    catch (e) { setMsg("WebGL2 gagal (" + errText(e) + "), preprocess pakai 2d"); }
+  }
+  preRun = "2d"; return pre2d;
 }
 
 // ---------- decode + NMS (per kelas, IoU 0.7, conf 0.25) ----------
 // output0: [1, 4+nc(+32), N], channel-major; kotak = cx,cy,w,h dalam piksel input; skor sudah sigmoid.
 function decode(data, nc, N) {
-  const c = []; // kandidat
+  const c = [];
   for (let i = 0; i < N; i++) {
     let best = -1, bs = 0;
     for (let k = 0; k < nc; k++) { const s = data[(4 + k) * N + i]; if (s > bs) { bs = s; best = k; } }
@@ -89,54 +197,62 @@ function nms(cands) {
   }
   return keep;
 }
-function postprocess(out0, nc) {
-  const N = out0.dims[2];
-  return nms(decode(out0.data, nc, N));
-}
+function postprocess(out0, nc) { return nms(decode(out0.data, nc, out0.dims[2])); }
 
 // ---------- load model ----------
-async function createSession(name, sz, backend) {
-  const buf = await (await fetch(`/models/${name}_${sz}.onnx`)).arrayBuffer();
-  return ort.InferenceSession.create(buf, { executionProviders: [backend], graphOptimizationLevel: "all" });
+function setMsg(t) { el.msg.textContent = t || ""; }
+async function createSession(name, sz, backend, prec) {
+  const url = `/models/${name}_${sz}${prec === "fp16" ? "_fp16" : ""}.onnx`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url} tidak ada (HTTP ${res.status})`);
+  return ort.InferenceSession.create(await res.arrayBuffer(), { executionProviders: [backend], graphOptimizationLevel: "all" });
 }
 async function warmup(session, sz) {
   const t = new ort.Tensor("float32", new Float32Array(3 * sz * sz).fill(0.45), [1, 3, sz, sz]);
-  await session.run({ images: t });
+  for (let i = 0; i < 2; i++) await session.run({ images: t }); // kompilasi shader (webgpu) / init thread
 }
-async function loadBackend(backend, sz, wantBox, wantSeg) {
+async function loadOnce(backend, sz, wantBox, wantSeg, prec) {
   const sessions = {};
-  const t0 = performance.now();
-  if (wantBox) sessions.box = await createSession("box", sz, backend);
-  if (wantSeg) sessions.seg = await createSession("seg", sz, backend);
-  const loadMs = performance.now() - t0;
-  const t1 = performance.now();
-  for (const k of Object.keys(sessions)) await warmup(sessions[k], sz); // kompilasi shader (webgpu) / init thread
-  return { sessions, loadMs, warmMs: performance.now() - t1 };
+  try {
+    const t0 = performance.now();
+    if (wantBox) sessions.box = await createSession("box", sz, backend, prec);
+    if (wantSeg) sessions.seg = await createSession("seg", sz, backend, prec);
+    const loadMs = performance.now() - t0;
+    const t1 = performance.now();
+    for (const k of Object.keys(sessions)) await warmup(sessions[k], sz);
+    return { sessions, loadMs, warmMs: performance.now() - t1 };
+  } catch (e) {
+    for (const s of Object.values(sessions)) { try { await s.release(); } catch (_) {} }
+    throw e;
+  }
 }
 async function releaseLoaded() {
   if (!loaded) return;
   for (const s of Object.values(loaded.sessions)) { try { await s.release(); } catch (e) {} }
   loaded = null;
 }
-async function ensureLoaded(sz, wantBox, wantSeg, pref) {
-  const key = `${pref}|${sz}|${wantBox}|${wantSeg}`;
+async function ensureLoaded(sz, wantBox, wantSeg, pref, prec) {
+  const key = `${pref}|${sz}|${wantBox}|${wantSeg}|${prec}`;
   if (loaded && loaded.key === key) return;
   await releaseLoaded();
   const order = pref === "auto" ? (navigator.gpu ? ["webgpu", "wasm"] : ["wasm"]) : [pref];
-  let lastErr = null;
+  const notes = [];
   for (const be of order) {
-    try {
-      setMsg(`memuat model (${be}) ...`);
-      const r = await loadBackend(be, sz, wantBox, wantSeg);
-      loaded = { key, backend: be, ...r };
-      setMsg(be !== order[0] ? `webgpu gagal (${lastErr && lastErr.message ? lastErr.message.slice(0, 80) : lastErr}), pakai wasm` : "");
-      return;
-    } catch (e) {
-      lastErr = e; console.error(be, e);
-      for (const s of Object.values(e.sessions || {})) { try { await s.release(); } catch (_) {} }
+    const precs = prec === "fp16" ? ["fp16", "fp32"] : ["fp32"];
+    for (const p of precs) {
+      try {
+        setMsg(`memuat model (${be}, ${p}) ...`);
+        const r = await loadOnce(be, sz, wantBox, wantSeg, p);
+        loaded = { key, backend: be, precRun: p, precNote: notes.join("; "), ...r };
+        setMsg(notes.length ? "CATATAN: " + loaded.precNote : "");
+        return;
+      } catch (e) {
+        console.error(be, p, e);
+        notes.push(`${be} ${p} gagal: ${errText(e)}`);
+      }
     }
   }
-  throw new Error("semua backend gagal: " + (lastErr && lastErr.message ? lastErr.message : lastErr));
+  throw new Error("semua backend gagal: " + notes.join("; "));
 }
 
 // ---------- gambar ----------
@@ -162,38 +278,41 @@ function drawBoxes(dets, g) {
 }
 
 // ---------- loop ----------
-async function loop(sz) {
+// Satu frame = preprocess + box (tiap frame) + seg (hanya frame ke-0, N, 2N, ...) + gambar. FPS menghitung SEMUA frame.
+async function loop(sz, segN) {
   const S = loaded.sessions;
+  frameIdx = 0;
   while (running) {
     const v = el.vid;
     if (v.readyState < 2 || !v.videoWidth) { await sleep(20); continue; }
     const t0 = performance.now();
-    const g = preprocess(v, sz);
+    const { g, tensor } = preFn(v, sz);
     lastRes = { w: g.w, h: g.h };
     const t1 = performance.now();
-    const input = new ort.Tensor("float32", inBuf, [1, 3, sz, sz]);
     let boxMs = NaN, boxNms = NaN, segMs = NaN, segNms = NaN, dets = [];
     if (S.box) {
       const a = performance.now();
-      const o = await S.box.run({ images: input });
+      const o = await S.box.run({ images: tensor });
       const b = performance.now();
       dets = postprocess(o[S.box.outputNames[0]], BOX_NAMES.length);
       boxMs = b - a; boxNms = performance.now() - b;
       lastNBox = dets.length;
     }
-    if (S.seg) {
+    const segNow = S.seg && frameIdx % segN === 0;
+    if (segNow) {
       const a = performance.now();
-      const o = await S.seg.run({ images: input });
+      const o = await S.seg.run({ images: tensor });
       const b = performance.now();
-      const segDets = postprocess(o[S.seg.outputNames[0]], SEG_NAMES.length); // 32 koef mask diabaikan
+      lastNSeg = postprocess(o[S.seg.outputNames[0]], SEG_NAMES.length).length; // 32 koef mask diabaikan
       segMs = b - a; segNms = performance.now() - b;
-      lastNSeg = segDets.length;
     }
     const d0 = performance.now();
     drawBoxes(dets, g);
     const end = performance.now();
-    sample.push({ pre: t1 - t0, box: boxMs, boxNms, seg: segMs, segNms, draw: end - d0, total: end - t0, end });
+    sample.push({ pre: t1 - t0, box: boxMs, boxNms, seg: segMs, segNms, draw: end - d0, total: end - t0,
+      totalSeg: segNow ? end - t0 : NaN, totalNoSeg: segNow ? NaN : end - t0, end });
     if (sample.length > WINDOW) sample.shift();
+    frameIdx++;
     await sleep(0); // lepas ke browser (render video / UI)
   }
 }
@@ -203,36 +322,39 @@ function snapshot() {
   const col = (k) => median(sample.map((s) => s[k]).filter(Number.isFinite));
   let fps = NaN;
   if (sample.length >= 2) fps = ((sample.length - 1) * 1000) / (sample[sample.length - 1].end - sample[0].end);
-  return { n: sample.length, pre: col("pre"), box: col("box"), boxNms: col("boxNms"), seg: col("seg"),
-    segNms: col("segNms"), draw: col("draw"), total: col("total"), fps };
+  const nSeg = sample.filter((s) => Number.isFinite(s.seg)).length;
+  return { n: sample.length, nSeg, pre: col("pre"), box: col("box"), boxNms: col("boxNms"), seg: col("seg"), segNms: col("segNms"),
+    draw: col("draw"), total: col("total"), totalSeg: col("totalSeg"), totalNoSeg: col("totalNoSeg"), fps };
 }
 function resultLine() {
   const s = snapshot(), L = loaded;
   const on = (x) => (x ? "on" : "off");
   return [
-    `JalanKuSpike ort=${ORT_VERSION}`,
-    `backend=${L ? L.backend : "-"}`, `threads=${threads}`, `isolated=${isolated}`,
-    `imgsz=${el.sz.value}`, `box=${on(L && L.sessions.box)} seg=${on(L && L.sessions.seg)}`,
-    `cam=${lastRes.w}x${lastRes.h}`,
+    `JalanKu5a ort=${ORT_VERSION}`,
+    `imgsz=${el.sz.value}`, `presisi=${el.prec.value}->${L ? L.precRun : "-"}`, `backend=${L ? L.backend : "-"}`,
+    `segN=${el.segN.value}`, `pre=${preRun}`, `box=${on(L && L.sessions.box)} seg=${on(L && L.sessions.seg)}`,
+    `gpuF16=${gpuF16}`, `threads=${threads}`, `cam=${lastRes.w}x${lastRes.h}`,
     `load_ms=${fmt(L && L.loadMs, 0)} warmup_ms=${fmt(L && L.warmMs, 0)}`,
-    `med${WINDOW}: pre=${fmt(s.pre)} box=${fmt(s.box)} boxNMS=${fmt(s.boxNms)} seg=${fmt(s.seg)} segNMS=${fmt(s.segNms)} draw=${fmt(s.draw)} total=${fmt(s.total)} ms`,
-    `fps=${fmt(s.fps)}`, `nBox=${lastNBox} nSeg=${lastNSeg}`,
+    `med${WINDOW}(n=${s.n},seg=${s.nSeg}): pre=${fmt(s.pre)} box=${fmt(s.box)} boxNMS=${fmt(s.boxNms)} seg=${fmt(s.seg)} segNMS=${fmt(s.segNms)} ` +
+      `draw=${fmt(s.draw)} total=${fmt(s.total)} totalSeg=${fmt(s.totalSeg)} totalTanpaSeg=${fmt(s.totalNoSeg)} ms`,
+    `fps=${fmt(s.fps, 2)}`, `nBox=${lastNBox} nSeg=${lastNSeg}`,
+    ...(L && L.precNote ? [`catatan=${L.precNote}`] : []),
     `UA=${navigator.userAgent}`,
   ].join(" | ");
 }
 function render() {
   const s = snapshot(), L = loaded;
-  el.fps.textContent = `${fmt(s.fps)} fps`;
+  el.fps.textContent = `${fmt(s.fps, 2)} fps`;
   el.stats.textContent =
-`backend      : ${L ? L.backend : "-"}   (wasm threads ${threads}, crossOriginIsolated ${isolated})
-imgsz        : ${el.sz.value}   kamera ${lastRes.w}x${lastRes.h}
+`backend      : ${L ? L.backend : "-"}   presisi diminta ${el.prec.value}, JALAN ${L ? L.precRun : "-"}   (gpu shader-f16: ${gpuF16})
+imgsz        : ${el.sz.value}   kamera ${lastRes.w}x${lastRes.h}   seg tiap ${el.segN.value} frame   preprocess ${preRun}
 load model   : ${fmt(L && L.loadMs, 0)} ms (+ warm-up ${fmt(L && L.warmMs, 0)} ms), sekali
---- median ${WINDOW} frame terakhir (n=${s.n}) ---
+--- median ${WINDOW} frame terakhir (n=${s.n}, seg jalan di ${s.nSeg}) ---
 preprocess   : ${fmt(s.pre)} ms
 box model    : ${fmt(s.box)} ms    box NMS : ${fmt(s.boxNms)} ms    (${lastNBox} deteksi)
-seg model    : ${fmt(s.seg)} ms    seg NMS : ${fmt(s.segNms)} ms    (${lastNSeg} deteksi, tanpa mask)
+seg model    : ${fmt(s.seg)} ms    seg NMS : ${fmt(s.segNms)} ms    (${lastNSeg} deteksi, tanpa mask; hanya frame yang seg jalan)
 gambar       : ${fmt(s.draw)} ms
-TOTAL/frame  : ${fmt(s.total)} ms`;
+TOTAL/frame  : ${fmt(s.total)} ms   (frame dengan seg ${fmt(s.totalSeg)}, tanpa seg ${fmt(s.totalNoSeg)})`;
 }
 setInterval(() => { if (running) render(); }, 1000);
 
@@ -243,13 +365,15 @@ async function takeWake() {
 document.addEventListener("visibilitychange", () => { if (running && document.visibilityState === "visible") takeWake(); });
 
 // ---------- start / stop ----------
-function lockControls(b) { for (const k of ["sz", "be", "useBox", "useSeg"]) el[k].disabled = b; }
+const CONTROLS = ["sz", "be", "prec", "segN", "pre", "useBox", "useSeg"];
+function lockControls(b) { for (const k of CONTROLS) el[k].disabled = b; }
 async function start() {
   if (!el.useBox.checked && !el.useSeg.checked) { setMsg("pilih minimal satu model (box/seg)"); return; }
   lockControls(true); el.go.disabled = true;
   try {
     const sz = +el.sz.value;
-    await ensureLoaded(sz, el.useBox.checked, el.useSeg.checked, el.be.value);
+    await ensureLoaded(sz, el.useBox.checked, el.useSeg.checked, el.be.value, el.prec.value);
+    preFn = pickPre(params.get("pre") === "lama" ? "lama" : el.pre.value);
     stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: { ideal: "environment" }, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
     el.vid.srcObject = stream;
@@ -257,9 +381,9 @@ async function start() {
     await takeWake();
     sample = []; running = true;
     el.go.textContent = "Stop"; el.go.classList.add("on");
-    loop(sz);
+    loop(sz, +el.segN.value);
   } catch (e) {
-    console.error(e); setMsg("gagal: " + (e && e.message ? e.message : e)); lockControls(false);
+    console.error(e); setMsg("gagal: " + errText(e)); lockControls(false);
   }
   el.go.disabled = false;
 }
@@ -282,15 +406,29 @@ el.copy.addEventListener("click", async () => {
   catch (e) { el.out.select(); document.execCommand("copy"); setMsg("tersalin (cara lama); kalau gagal, salin teks di kotak bawah"); }
 });
 
-// ---------- mode otomatis untuk tes di laptop: ?auto=DETIK&sz=320&be=wasm&box=1&seg=1 ----------
+// ---------- mode otomatis untuk tes di laptop ----------
+// ?auto=DETIK&sz=320&be=webgpu&prec=fp32&segN=2&pre=webgl|2d|lama&box=1&seg=1  -> POST /report satu baris hasil
 (async function auto() {
+  for (const k of ["sz", "be", "prec", "segN", "pre"]) if (params.get(k) && params.get(k) !== "lama") el[k].value = params.get(k);
   if (!params.get("auto")) return;
-  if (params.get("sz")) el.sz.value = params.get("sz");
-  if (params.get("be")) el.be.value = params.get("be");
   el.useBox.checked = params.get("box") !== "0";
   el.useSeg.checked = params.get("seg") !== "0";
   await start();
   if (!running) { await fetch("/report", { method: "POST", body: "AUTO GAGAL: " + el.msg.textContent }); return; }
+  if (params.get("cekpre")) { // banding isi buffer webgl vs 2d pada frame yang sama (salah balik/geser akan terlihat besar)
+    const v = el.vid, sz = +el.sz.value;
+    const a = pre2d(v, sz).tensor.data.slice(), b = preWebgl(v, sz).tensor.data;
+    let mx = 0, sum = 0;
+    for (let i = 0; i < a.length; i++) { const d = Math.abs(a[i] - b[i]); sum += d; if (d > mx) mx = d; }
+    const shift = []; // rata-rata beda bila webgl digeser dx,dy piksel (kanal R, area dalam): minimum harus di 0,0
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      let s = 0, n = 0;
+      for (let y = 8; y < sz - 8; y++) for (let x = 8; x < sz - 8; x++) { s += Math.abs(a[y * sz + x] - b[(y + dy) * sz + x + dx]); n++; }
+      shift.push(`${dx},${dy}:${(s / n * 255).toFixed(2)}`);
+    }
+    await fetch("/report", { method: "POST", body: `CEKPRE sz=${sz} cam=${v.videoWidth}x${v.videoHeight} maxdiff=${(mx * 255).toFixed(1)}/255 meandiff=${(sum / a.length * 255).toFixed(3)}/255 geser=[${shift.join(" ")}]` });
+    P.g = null;
+  }
   await sleep(+params.get("auto") * 1000);
   await stop();
   await fetch("/report", { method: "POST", body: resultLine() });
