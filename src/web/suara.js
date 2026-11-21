@@ -1,6 +1,7 @@
 const pengaturanSuara = {
   jedaUlangMs: 4000,
   jedaKelasRinganMs: 8000, // benda ringan (tingkat 1) berkelas sama tidak diucapkan ulang; 0 = mati
+  jedaSampingMs: 10000, // pesan samping (" di kiri"/" di kanan") yang SAMA baru diulang sesudah jeda ini; 0 = mati (v1). Aturan v1.1 B, lihat data/aturan-v1-1/hasil_ablasi.md
   rate: 1,
   volume: 1,
 };
@@ -39,7 +40,12 @@ function ucapkan(peringatan) {
 
   const sekarang = Date.now();
   const sama = peringatan.pesan === pesanTerakhir;
-  if (sama && sekarang - waktuTerakhir < pengaturanSuara.jedaUlangMs) return;
+  const samping = / di (kiri|kanan)/.test(peringatan.pesan);
+  const jedaSama =
+    samping && pengaturanSuara.jedaSampingMs > 0
+      ? Math.max(pengaturanSuara.jedaUlangMs, pengaturanSuara.jedaSampingMs)
+      : pengaturanSuara.jedaUlangMs;
+  if (sama && sekarang - waktuTerakhir < jedaSama) return;
 
   // Benda ringan (tingkat 1): kelas yang sama tidak diucapkan lagi dalam jeda ini,
   // walau teksnya berbeda (kanan/depan, dekat/sedang). Tingkat 2 dan 3 tidak terpengaruh.
