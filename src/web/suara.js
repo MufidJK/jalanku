@@ -85,6 +85,21 @@ function ucapkan(peringatan) {
   if (peringatan.tingkat === 1) waktuKelasRingan[peringatan.kelas] = sekarang;
 }
 
+// Pesan aplikasi (bukan peringatan): selalu memotong suara yang sedang bicara
+// dan tidak menyentuh catatan jeda ulang peringatan.
+function ucapkanSistem(teks) {
+  if (!("speechSynthesis" in window) || bisu) return;
+  const synth = window.speechSynthesis;
+  synth.cancel();
+  const u = new SpeechSynthesisUtterance(teks);
+  u.lang = "id-ID";
+  u.rate = pengaturanSuara.rate;
+  u.volume = pengaturanSuara.volume;
+  const v = pilihSuaraIndonesia();
+  if (v) u.voice = v;
+  synth.speak(u);
+}
+
 if ("speechSynthesis" in window) {
   window.speechSynthesis.onvoiceschanged = () => {
     const v = pilihSuaraIndonesia();

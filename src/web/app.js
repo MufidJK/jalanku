@@ -12,6 +12,10 @@ const tombolMulai = document.getElementById("tombol-mulai");
 const tombolBisu = document.getElementById("tombol-bisu");
 const tombolAtur = document.getElementById("tombol-atur");
 const panel = document.getElementById("panel");
+const tombolModeSuara = document.getElementById("tombol-mode-suara");
+const layarSuara = document.getElementById("layar-suara");
+const teksTahan = document.getElementById("teks-tahan");
+const utama = document.querySelector("main");
 const ctx = overlay.getContext("2d");
 
 const LEBAR_KIRIM = 640;
@@ -36,6 +40,16 @@ let timer = null; // setTimeout berikutnya (maksimal satu yang menunggu)
 let jalan = false; // loop kirim sedang aktif
 let sibuk = false;
 let jumlah = 0;
+
+// State jalan (bukan lagi "stream ada atau tidak"):
+let aktif = false; // Mulai/Mode suara ditekan dan belum Berhenti
+let modeSuara = false; // lapisan hitam tampil
+let dijeda = false; // dijeda otomatis karena halaman tersembunyi
+let sedangMulai = false; // getUserMedia dari Mulai/Mode suara masih menunggu
+// Naik setiap Berhenti atau halaman tersembunyi. Kamera atau balasan yang
+// datang dengan generasi lama sudah usang dan dibuang.
+let generasi = 0;
+let generasiSiklus = 0; // generasi saat siklus kirim yang sedang jalan dimulai
 
 // Banner "tanpa peringatan": ganti hanya setelah 2 balasan berturut-turut.
 const BALASAN_BERTURUT = 2;
@@ -155,6 +169,7 @@ function petaKotak(k) {
 
 function gambarOverlay(balasan) {
   bersihkanOverlay();
+  if (modeSuara) return; // tertutup lapisan hitam: tidak perlu menggambar
   garisZona();
   if (!balasan) return;
   const p = balasan.peringatan;
@@ -295,6 +310,8 @@ async function siklus() {
   if (sibuk) return; // hanya satu proses dalam satu waktu
   sibuk = true;
   const tMulai = performance.now();
+  const gen = generasi;
+  generasiSiklus = gen;
   let berhasil = false;
   try {
     const jpeg = await ambilJpeg();
@@ -304,8 +321,10 @@ async function siklus() {
     let balasan;
     if (MODE_MOCK) {
       balasan = await ambilMock();
+      if (gen !== generasi) return; // usang (dari sebelum jeda/Berhenti): buang
     } else {
       balasan = await kirimKeServer(jpeg);
+      if (gen !== generasi) return; // usang (dari sebelum jeda/Berhenti): buang
       if (!balasan) {
         resetBanner(); // banner "Server bermasalah" tampil; mulai bersih saat pulih
         return;
@@ -333,15 +352,69 @@ function hentikanLoop() {
   timer = null;
 }
 
-async function mulaiKamera() {
+// server.js memanggil tandaiServerBermasalah() dari dalam kirimKeServer().
+// Permintaan usang (dikirim sebelum jeda/Berhenti) tidak boleh menampilkan
+// atau mengucapkan "Server bermasalah". server.js tidak diubah: bungkus di sini.
+// Aman karena hanya ada satu siklus kirim dalam satu waktu (sibuk).
+const tandaiServerBermasalahAsli = tandaiServerBermasalah;
+tandaiServerBermasalah = function (alasan) {
+  if (generasiSiklus !== generasi) return;
+  tandaiServerBermasalahAsli(alasan);
+};
+
+function lepasStream() {
+  if (stream) {
+    stream.getTracks().forEach((t) => t.stop());
+    stream = null;
+  }
+  kamera.srcObject = null;
+}
+
+// Ambil kamera dan putar videonya. Dipakai Mulai, Mode suara, lanjut otomatis.
+// true: kamera jalan. false: permintaan usang (Berhenti atau halaman
+// tersembunyi lagi saat menunggu), track baru sudah dihentikan.
+// Gagal sungguhan: melempar error.
+async function ambilKamera() {
+  const gen = generasi;
+  let s;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
+    s = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: "environment" },
       audio: false,
     });
-    kamera.srcObject = stream;
+  } catch (err) {
+    if (gen !== generasi) return false;
+    throw err;
+  }
+  if (gen !== generasi) {
+    s.getTracks().forEach((t) => t.stop());
+    return false;
+  }
+  stream = s;
+  kamera.srcObject = s;
+  try {
     await kamera.play();
+  } catch (err) {
+    if (gen !== generasi) return false; // jeda/Berhenti sudah melepas kamera
+    lepasStream();
+    throw err;
+  }
+  if (gen !== generasi) return false;
+  // Riwayat frame server per X-Sesi tidak kedaluwarsa: setiap kamera mulai
+  // (Mulai, Mode suara, lanjut otomatis) memakai sesi baru.
+  sesiBaru();
+  return true;
+}
+
+// Hasil: "jalan", "gagal" (status "Kamera gagal: ..." sudah tampil), "usang".
+async function mulaiKamera() {
+  if (sedangMulai) return "usang"; // ketukan ganda saat masih menunggu
+  sedangMulai = true;
+  try {
+    if (!(await ambilKamera())) return "usang";
+    aktif = true;
     layarAwal.hidden = true;
+    perbaruiTombolModeSuara();
     setStatus("Kamera aktif.", null);
     tombolMulai.textContent = "Berhenti";
     tombolMulai.classList.add("jalan");
@@ -351,19 +424,24 @@ async function mulaiKamera() {
     jumlah = 0;
     jalankanLoop();
     mintaKunciLayar();
+    return "jalan";
   } catch (err) {
     setStatus("Kamera gagal: " + err.name, null);
+    return "gagal";
+  } finally {
+    sedangMulai = false;
   }
 }
 
 function berhentiKamera() {
+  generasi += 1; // kamera/balasan yang masih menunggu jadi usang
+  aktif = false;
+  dijeda = false;
+  if (modeSuara) keluarModeSuara(false);
+  perbaruiTombolModeSuara();
   hentikanLoop();
   lepasKunciLayar();
-  if (stream) {
-    stream.getTracks().forEach((t) => t.stop());
-    stream = null;
-  }
-  kamera.srcObject = null;
+  lepasStream();
   setStatus("Tekan Mulai.", null);
   setZona(null, 0);
   info.textContent = "";
@@ -399,9 +477,120 @@ async function lepasKunciLayar() {
   kunciLayar = null;
 }
 
-// Browser melepas kunci otomatis saat tab tersembunyi: minta lagi saat muncul.
+// --- Mode suara: lapisan hitam, peringatan tetap lewat suara dan getar ---
+const TEKS_KELUAR = "Tekan lama 2 detik untuk keluar";
+const TAHAN_MS = 2000;
+const GESER_MAKS_PX = 24;
+let tahan = null; // { id, x, y, timer } untuk pointer pertama saja
+
+function perbaruiTombolModeSuara() {
+  tombolModeSuara.hidden = aktif || !panel.hidden;
+}
+
+function masukModeSuara() {
+  modeSuara = true;
+  teksTahan.textContent = TEKS_KELUAR;
+  layarSuara.hidden = false;
+  utama.inert = true; // TalkBack tidak ikut membaca status di bawah lapisan
+  bersihkanOverlay();
+  layarSuara.focus();
+  ucapkanSistem("Mode suara aktif. Tekan lama dua detik untuk keluar.");
+}
+
+// suara=false dipakai Berhenti dan kamera gagal: tanpa getar dan ucapan.
+function keluarModeSuara(suara) {
+  batalTahan();
+  modeSuara = false;
+  layarSuara.hidden = true;
+  utama.inert = false;
+  if (!suara) return;
+  gambarOverlay(null);
+  tombolMulai.focus();
+  ucapkanSistem("Mode suara mati.");
+}
+
+function batalTahan() {
+  if (!tahan) return;
+  clearTimeout(tahan.timer);
+  tahan = null;
+  teksTahan.textContent = TEKS_KELUAR;
+}
+
+function selesaiTahan() {
+  tahan = null;
+  navigator.vibrate?.(60);
+  keluarModeSuara(true);
+}
+
+layarSuara.addEventListener("pointerdown", (e) => {
+  if (tahan) return;
+  tahan = {
+    id: e.pointerId,
+    x: e.clientX,
+    y: e.clientY,
+    timer: setTimeout(selesaiTahan, TAHAN_MS),
+  };
+  teksTahan.textContent = "Tahan...";
+});
+
+layarSuara.addEventListener("pointermove", (e) => {
+  if (!tahan || e.pointerId !== tahan.id) return;
+  if (Math.hypot(e.clientX - tahan.x, e.clientY - tahan.y) > GESER_MAKS_PX) {
+    batalTahan();
+  }
+});
+
+for (const jenis of ["pointerup", "pointercancel", "pointerleave"]) {
+  layarSuara.addEventListener(jenis, (e) => {
+    if (tahan && e.pointerId === tahan.id) batalTahan();
+  });
+}
+
+layarSuara.addEventListener("contextmenu", (e) => e.preventDefault());
+
+// --- Lanjut otomatis: kamera dilepas saat tersembunyi, diambil lagi saat muncul ---
+function jedaOtomatis() {
+  generasi += 1; // juga membatalkan getUserMedia yang masih menunggu
+  if (!aktif) return;
+  dijeda = true;
+  batalTahan();
+  hentikanLoop();
+  lepasStream();
+  if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+  // aktif dan modeSuara tetap: pengguna kembali ke mode yang sama.
+}
+
+async function lanjutOtomatis() {
+  dijeda = false;
+  let jalanLagi;
+  try {
+    jalanLagi = await ambilKamera();
+  } catch (err) {
+    ucapkanSistem("Kamera gagal.");
+    berhentiKamera();
+    setStatus("Kamera gagal: " + err.name, null);
+    return;
+  }
+  if (!jalanLagi) return; // tersembunyi lagi atau Berhenti saat menunggu
+  sesuaikanOverlay();
+  gambarOverlay(null);
+  jalankanLoop(); // juga mereset banner
+  mintaKunciLayar();
+  ucapkanSistem("Lanjut."); // baru sesudah kamera benar-benar diputar
+}
+
+// Browser melepas kunci layar dan memutus kamera saat tab tersembunyi.
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && stream) mintaKunciLayar();
+  if (document.visibilityState === "hidden") {
+    jedaOtomatis();
+    return;
+  }
+  if (!aktif) return;
+  if (dijeda) {
+    lanjutOtomatis();
+  } else {
+    mintaKunciLayar();
+  }
 });
 
 window.addEventListener("resize", () => {
@@ -416,25 +605,44 @@ if (document.fonts) {
 }
 
 tombolMulai.addEventListener("click", () => {
-  if (stream) {
+  if (aktif) {
     berhentiKamera();
   } else {
     mulaiKamera();
   }
 });
 
+tombolModeSuara.addEventListener("click", async () => {
+  if (aktif || sedangMulai) return;
+  // Mode suara tidak pernah mulai dalam keadaan bisu.
+  setBisu(false);
+  perbaruiTombolBisu();
+  const hasil = await mulaiKamera();
+  if (hasil === "jalan") {
+    masukModeSuara();
+  } else if (hasil === "gagal") {
+    bukaSuara();
+    ucapkanSistem("Kamera gagal.");
+  }
+});
+
 // --- Bisu ---
-tombolBisu.addEventListener("click", () => {
-  setBisu(!bisu);
+function perbaruiTombolBisu() {
   tombolBisu.textContent = bisu ? "Suara nyala" : "Bisu";
   tombolBisu.classList.toggle("aktif", bisu);
   tombolBisu.setAttribute("aria-pressed", String(bisu));
+}
+
+tombolBisu.addEventListener("click", () => {
+  setBisu(!bisu);
+  perbaruiTombolBisu();
 });
 
 // --- Pengaturan ---
 tombolAtur.addEventListener("click", () => {
   panel.hidden = !panel.hidden;
   tombolAtur.setAttribute("aria-expanded", String(!panel.hidden));
+  perbaruiTombolModeSuara(); // panel menutupi posisi tombol Mode suara
 });
 
 document.getElementById("atur-kirim").addEventListener("input", (e) => {

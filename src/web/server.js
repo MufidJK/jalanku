@@ -4,7 +4,17 @@
 const PARAM = new URLSearchParams(location.search);
 const ALAMAT_SERVER = (PARAM.get("server") || "").replace(/\/$/, "");
 const WAKTU_HABIS_MS = 3000;
-const SESI = Math.random().toString(36).slice(2, 10);
+let SESI = buatSesi();
+
+// Id sesi baru = riwayat frame server yang bersih (dipanggil tiap kamera mulai).
+function buatSesi() {
+  return Math.random().toString(36).slice(2, 10);
+}
+
+function sesiBaru() {
+  SESI = buatSesi();
+}
+
 let serverBermasalah = false;
 
 function tandaiServerBermasalah(alasan) {
