@@ -247,3 +247,6 @@ kaggle.json
 *.pem
 *.key
 *.crt
+
+venv-export/
+models/onnx/
