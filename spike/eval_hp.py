@@ -357,10 +357,16 @@ DISTIL_PT = "models/hp/hp-kotak-v3-416-distil_best.pt"
 ATURAN_5C = dict(box_mAP50=0.460, orang_AP50=0.589, recall_dekat=30)  # ditulis sebelum hasil (data/prompt-distilasi.md 0.3)
 # Ronde 2 (--r2): sama persis, hanya nama model/berkas yang bersufiks -r2; berkas ronde 1 tidak disentuh.
 SUF5C = ""  # "" atau "-r2"; diatur lewat --r2 di bawah
+ATURAN_R3_TEPIAN = 0.43  # aturan 4 ronde 3, ditulis sebelum hasil
+RUN5C = None  # ronde 3: nama run, mis. hp-kotak-v3-416-distil-r3-s0-t2 (--run); bobot = models/hp/<run>_last.pt
 
 
 def _d():
     """(sufiks berkas laporan, bobot .pt, nama onnx tanpa ekstensi, sufiks hitung_cek)."""
+    if RUN5C:
+        pendek = RUN5C.replace("hp-kotak-v3-416-", "")  # distil-r3-s0-t2
+        return ("-" + pendek.replace("distil-", ""), f"models/hp/{RUN5C}_last.pt", "hp_box_416_" + pendek.replace("-", "_"),
+                "_" + pendek.replace("-", "_"))
     if SUF5C:
         return SUF5C, "models/hp/hp-kotak-v3-416-distil-r2_best.pt", "hp_box_416_distil_r2", "_distil_r2"
     return "", DISTIL_PT, "hp_box_416_distil", "_distil"
@@ -518,6 +524,95 @@ def distil_laporan_r2():
     print("\n".join(md[-9:]))
 
 
+def distil_laporan_r3():
+    """Ronde 3: tabel 5 model (+ tahap 1 vs 2) dan aturan 1-4 untuk KEDUA seed pada last.pt tahap 2 (ONNX fp16). akurasi-r3.{json,md}."""
+    for p in (OUT5C / "akurasi-r3.json", OUT5C / "akurasi-r3.md"):
+        if p.exists():
+            sys.exit(f"{p} sudah ada, tidak ditimpa.")
+
+    def muat(path):
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+
+    b5, ox1, ox2 = muat(OUT5B / "onnx.json"), muat(OUT5C / "onnx.json"), muat(OUT5C / "onnx-r2.json")
+    p5, pt1, pt2 = muat(OUT5B / "pt.json"), muat(OUT5C / "pt.json"), muat(OUT5C / "pt-r2.json")
+    r3 = {f"s{s}-t{t}": (muat(OUT5C / f"onnx-r3-s{s}-t{t}.json"), muat(OUT5C / f"pt-r3-s{s}-t{t}.json")) for s in (0, 1) for t in (1, 2)}
+    f16 = {"sekarang": b5["box_onnx"]["416_fp16"], "r1": ox1["box_onnx"]["416_fp16"], "r2": ox2["box_onnx"]["416_fp16"]}
+    for k, (o, _) in r3.items():
+        f16["r3-" + k] = o["box_onnx"]["416_fp16"]
+    nama = {"sekarang": "hp-kotak-v3-416 (sekarang)", "r1": "distil r1", "r2": "distil r2",
+            "r3-s0-t1": "r3 seed 0 tahap 1 (info)", "r3-s0-t2": "**r3 seed 0 tahap 2 (dinilai)**",
+            "r3-s1-t1": "r3 seed 1 tahap 1 (info)", "r3-s1-t2": "**r3 seed 1 tahap 2 (dinilai)**"}
+    kelas = list(f16["sekarang"]["metrik"]["kelas"])
+
+    def ringkas(r):
+        m, c = r["metrik"], r["conf025"]
+        return m, c, c["recall_dekat"]
+
+    md = ["# Tahap 5c, ronde 3: akurasi self-training dua tahap (val v2, 54 frame, ONNX fp16)", "",
+          "Hanya last.pt tahap 2 yang dinilai per aturan; tahap 1 hanya informasi. Tidak ada pemilihan epoch atau best.pt.", "",
+          "| model | mAP50 | mAP50-95 | F1 | recall dekat 0.25 | TP/FP/FN 0.25 | n prediksi |", "|---|---|---|---|---|---|---|"]
+    for k, r in f16.items():
+        m, c, rd = ringkas(r)
+        md.append(f"| {nama[k]} | {f3(m['mAP50'])} | {f3(m['mAP50_95'])} | {f3(m['F1'])} | {rd['ditemukan']}/{rd['gt']} ({f3(rd['recall'])}) | "
+                  f"{c['total']['tp']}/{c['total']['fp']}/{c['total']['fn']} | {m['n_prediksi']} |")
+    md += ["", "### AP50 per kelas (ONNX fp16)", "", "| kelas | n | " + " | ".join(nama[k] for k in f16) + " |", "|---|---|" + "---|" * len(f16)]
+    for kl in kelas:
+        n = f16["sekarang"]["metrik"]["kelas"][kl]["n"]
+        md.append(f"| {'**' + kl + '**' if kl in PENTING + ('pilar',) else kl}{' *' if n < eb.LOW_N else ''} | {n} | "
+                  + " | ".join(f3(r["metrik"]["kelas"].get(kl, {}).get("AP50")) for r in f16.values()) + " |")
+    md += ["", "\\* n < 20 instance di val: angka kelas ini goyah.", "",
+           "### Apa yang diubah fine-tune data manusia (tahap 2 dikurangi tahap 1, ONNX fp16)", "",
+           "| seed | mAP50 | AP50 tepian | AP50 orang | AP50 kendaraan | recall dekat | TP | FP | FN |", "|---|---|---|---|---|---|---|---|---|"]
+
+    def sel(x, y):
+        return f"{x:.3f} -> {y:.3f} ({y - x:+.3f})"
+
+    for s in (0, 1):
+        ma, ca, ra = ringkas(f16[f"r3-s{s}-t1"])
+        mb, cb, rb = ringkas(f16[f"r3-s{s}-t2"])
+        md.append(f"| {s} | {sel(ma['mAP50'], mb['mAP50'])} | {sel(ma['kelas']['tepian']['AP50'], mb['kelas']['tepian']['AP50'])} | "
+                  f"{sel(ma['kelas']['orang']['AP50'], mb['kelas']['orang']['AP50'])} | "
+                  f"{sel(ma['kelas']['kendaraan']['AP50'], mb['kelas']['kendaraan']['AP50'])} | "
+                  f"{ra['ditemukan']} -> {rb['ditemukan']} | {ca['total']['tp']} -> {cb['total']['tp']} | "
+                  f"{ca['total']['fp']} -> {cb['total']['fp']} | {ca['total']['fn']} -> {cb['total']['fn']} |")
+    md += ["", "### Pembanding jalur .pt (informasi, bukan penentu)", "", "| model | mAP50 | AP50 tepian | AP50 orang | recall dekat |", "|---|---|---|---|---|"]
+    pt_baris = [("sekarang", p5["box_pt"]["416"]), ("r1", pt1["box_pt"]["416"]), ("r2", pt2["box_pt"]["416"])] + \
+               [("r3-" + k, p["box_pt"]["416"]) for k, (_, p) in r3.items()]
+    for k, r in pt_baris:
+        m, c, rd = ringkas(r)
+        md.append(f"| {nama[k]} | {f3(m['mAP50'])} | {f3(m['kelas']['tepian']['AP50'])} | {f3(m['kelas']['orang']['AP50'])} | "
+                  f"{rd['ditemukan']}/{rd['gt']} |")
+    md += ["", "## Aturan 0.3 putaran 3 (ONNX fp16, tahap 2, SEMUA harus lolos untuk KEDUA seed)", "",
+           "| seed | 1. mAP50 >= 0.460 | 2. AP50 orang >= 0.589 | 3. recall dekat >= 30/72 | 4. AP50 tepian >= 0.43 | semua |",
+           "|---|---|---|---|---|---|"]
+    hasil, lolos = {}, []
+
+    def ket(x):
+        return "LOLOS" if x else "GAGAL"
+
+    for s in (0, 1):
+        m, c, rd = ringkas(f16[f"r3-s{s}-t2"])
+        v = dict(mAP50=m["mAP50"], orang_AP50=m["kelas"]["orang"]["AP50"], recall_dekat=rd["ditemukan"], tepian_AP50=m["kelas"]["tepian"]["AP50"])
+        a = [v["mAP50"] >= ATURAN_5C["box_mAP50"], v["orang_AP50"] >= ATURAN_5C["orang_AP50"],
+             v["recall_dekat"] >= ATURAN_5C["recall_dekat"], v["tepian_AP50"] >= ATURAN_R3_TEPIAN]
+        v["aturan"] = [bool(x) for x in a]
+        v["semua"] = bool(all(a))
+        hasil[f"s{s}"] = v
+        lolos.append(v["semua"])
+        md.append(f"| {s} | {v['mAP50']:.4f} {ket(a[0])} | {v['orang_AP50']:.4f} {ket(a[1])} | {v['recall_dekat']}/72 {ket(a[2])} | "
+                  f"{v['tepian_AP50']:.4f} {ket(a[3])} | {ket(v['semua'])} |")
+    if all(lolos):
+        s_pilih = max((0, 1), key=lambda s: (hasil[f"s{s}"]["recall_dekat"], hasil[f"s{s}"]["tepian_AP50"]))
+        putus = f"GANTI hp-kotak-v3-416 dengan hp-kotak-v3-416-distil-r3-s{s_pilih}-t2 (recall dekat lebih tinggi; seri: tepian lebih tinggi)"
+    else:
+        s_pilih, putus = None, "PERTAHANKAN hp-kotak-v3-416 (tidak kedua seed lolos semua aturan)"
+    md += ["", f"**Keputusan: {putus}.**"]
+    tulis(OUT5C / "akurasi-r3.json", dict(aturan=dict(ATURAN_5C, tepian_AP50=ATURAN_R3_TEPIAN), hasil=hasil, seed_terpilih=s_pilih,
+                                          keputusan=putus, box_onnx_fp16=f16))
+    (OUT5C / "akurasi-r3.md").write_text("\n".join(md) + "\n", encoding="utf-8")
+    print("\n".join(md[-9:]))
+
+
 # ---------------------------------------------------------------- laporan
 def f3(x):
     return "-" if x is None else f"{x:.3f}"
@@ -606,13 +701,17 @@ def bagian_laporan():
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--bagian", choices=["pt", "onnx", "laporan", "hp-pt", "hp-onnx", "hp-laporan",
-                                         "distil-pt", "distil-onnx", "distil-laporan", "distil-laporan-r2"], required=True)
+                                         "distil-pt", "distil-onnx", "distil-laporan", "distil-laporan-r2", "distil-laporan-r3"], required=True)
     ap.add_argument("--r2", action="store_true", help="ronde 2: bagian distil-pt/distil-onnx memakai hp-kotak-v3-416-distil-r2")
+    ap.add_argument("--run", help="ronde 3: bagian distil-pt/distil-onnx memakai models/hp/<run>_last.pt (hp-kotak-v3-416-distil-r3-s?-t?)")
     arg = ap.parse_args()
     b = arg.bagian
     if arg.r2:
         SUF5C = "-r2"
+    if arg.run:
+        assert arg.run.startswith("hp-kotak-v3-416-distil-r3-"), arg.run
+        RUN5C = arg.run
     {"pt": bagian_pt, "onnx": bagian_onnx, "laporan": bagian_laporan,
      "hp-pt": hp_pt, "hp-onnx": hp_onnx, "hp-laporan": hp_laporan,
      "distil-pt": distil_pt, "distil-onnx": distil_onnx, "distil-laporan": distil_laporan,
-     "distil-laporan-r2": distil_laporan_r2}[b]()
+     "distil-laporan-r2": distil_laporan_r2, "distil-laporan-r3": distil_laporan_r3}[b]()
