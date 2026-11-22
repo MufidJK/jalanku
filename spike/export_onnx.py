@@ -46,6 +46,22 @@ def ekspor_hp(a):
                 print("tersimpan:", dst, f"{dst.stat().st_size / 1e6:.2f} MB")
 
 
+def ekspor_distil(a):
+    """Tahap 5c: hp-kotak-v3-416-distil_best.pt -> models/onnx/hp_box_416_distil[_fp16].onnx. Pengaturan sama dengan 5b. Tidak menimpa."""
+    pt_src = ROOT / "models" / "hp" / "hp-kotak-v3-416-distil_best.pt"
+    dst = a.out / f"hp_box_416_distil{'_fp16' if a.fp16 else ''}.onnx"
+    if dst.exists():
+        print("sudah ada, lewati:", dst)
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        pt = Path(tmp) / pt_src.name
+        shutil.copy(pt_src, pt)
+        kw = dict(quantize=16) if a.fp16 else dict(half=False)
+        p = YOLO(str(pt)).export(format="onnx", imgsz=416, dynamic=False, simplify=True, device="cpu", **kw)
+        shutil.move(p, dst)
+        print("tersimpan:", dst, f"{dst.stat().st_size / 1e6:.2f} MB")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, default=ROOT / "models" / "onnx")
@@ -57,8 +73,12 @@ def main():
     ap.add_argument("--hp", action="store_true",
                     help="Tahap 5b: ekspor bobot latih ulang models/hp/hp-{kotak,seg}-v3-{320,416}_best.pt ke "
                          "models/onnx/hp_{box,seg}_{320,416}[_fp16].onnx (fp32, atau fp16 bersama --fp16). Tidak pernah menimpa.")
+    ap.add_argument("--distil", action="store_true",
+                    help="Tahap 5c: ekspor models/hp/hp-kotak-v3-416-distil_best.pt ke models/onnx/hp_box_416_distil[_fp16].onnx. Tidak pernah menimpa.")
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
+    if a.distil:
+        return ekspor_distil(a)
     if a.hp:
         return ekspor_hp(a)
     sizes = (416, 320) if a.fp16 else SIZES

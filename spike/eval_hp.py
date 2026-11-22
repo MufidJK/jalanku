@@ -145,14 +145,14 @@ def bagian_pt():
 
 
 # ---------------------------------------------------------------- bagian onnx (CPU, venv-export)
-def hitung_cek(sz, kind, pt_name, imgs, names, prefix=""):
+def hitung_cek(sz, kind, pt_name, imgs, names, prefix="", sufiks=""):
     """Jumlah deteksi conf >= 0.25 pada 3 frame: .pt vs ONNX fp32 vs ONNX fp16 (gambar letterbox yang sama)."""
     import cv2
     from ultralytics import YOLO
 
     pt = YOLO(str(ROOT / pt_name))
     nc = len(names)
-    files = {"fp32": ONNX / f"{prefix}{kind}_{sz}.onnx", "fp16": ONNX / f"{prefix}{kind}_{sz}_fp16.onnx"}
+    files = {"fp32": ONNX / f"{prefix}{kind}_{sz}{sufiks}.onnx", "fp16": ONNX / f"{prefix}{kind}_{sz}{sufiks}_fp16.onnx"}
     sess = {k: sesi(v) for k, v in files.items() if v.exists()}
     rows = []
     for p in imgs:
@@ -351,6 +351,104 @@ def hp_laporan():
     print("tersimpan:", OUT5B / "akurasi.md")
 
 
+# ---------------------------------------------------------------- Tahap 5c (distilasi, box 416)
+OUT5C = ROOT / "data" / "model-hp" / "5c"
+DISTIL_PT = "models/hp/hp-kotak-v3-416-distil_best.pt"
+ATURAN_5C = dict(box_mAP50=0.460, orang_AP50=0.589, recall_dekat=30)  # ditulis sebelum hasil (data/prompt-distilasi.md 0.3)
+
+
+def distil_pt():
+    """GPU: box .pt hp-kotak-v3-416-distil pada imgsz 416 (pembanding, tidak menentukan). VAL v2 saja."""
+    out = OUT5C / "pt.json"
+    if out.exists():
+        sys.exit(f"{out} sudah ada, tidak ditimpa.")
+    names, imgs, lab_dir = er.cek_val(er.YK)
+    er.pasang_imgsz()
+    nm = "hp5c-box-416"
+    er.MODEL[nm] = ("detect", er.YK, DISTIL_PT, 416)
+    pred, _ = ev.prediksi(nm, imgs, conf=CONF_MAP)
+    h = dict(sumber="val v2 (er.cek_val(er.YK), 54 frame)", box_pt={"416": ringkas_box(names, imgs, lab_dir, pred)})
+    print(f"   mAP50 .pt {h['box_pt']['416']['metrik']['mAP50']:.4f}", flush=True)
+    tulis(out, h)
+
+
+def distil_onnx():
+    """CPU: box ONNX fp32 + fp16 (jalur app.js) + cek jumlah deteksi .pt vs ONNX."""
+    out = OUT5C / "onnx.json"
+    if out.exists():
+        sys.exit(f"{out} sudah ada, tidak ditimpa.")
+    names, imgs, lab_dir = er.cek_val(er.YK)
+    h = dict(sumber="val v2 (er.cek_val(er.YK), 54 frame)", jalur="letterbox app.js + NMS per kelas IoU 0.7 + ensemble_val.metrik",
+             box_onnx={}, cek_jumlah={})
+    for prec in ("fp32", "fp16"):
+        f = ONNX / ("hp_box_416_distil.onnx" if prec == "fp32" else "hp_box_416_distil_fp16.onnx")
+        if not f.exists():
+            sys.exit(f"{f} belum ada (ekspor dulu: export_onnx.py --distil [--fp16])")
+        print(f"== box ONNX distil 416 {prec}", flush=True)
+        pred, ms = prediksi_onnx(f, 416, imgs, len(names))
+        r = ringkas_box(names, imgs, lab_dir, pred)
+        r["cpu_ms_median"] = ms
+        h["box_onnx"][f"416_{prec}"] = r
+        print(f"   mAP50 {r['metrik']['mAP50']:.4f} mAP50-95 {r['metrik']['mAP50_95']:.4f} n_pred {r['metrik']['n_prediksi']}", flush=True)
+    h["cek_jumlah"]["box_416_distil"] = hitung_cek(416, "box", DISTIL_PT, imgs[:3], names, prefix="hp_", sufiks="_distil")
+    tulis(out, h)
+
+
+def distil_laporan():
+    """Tabel samping-menyamping dan aturan 0.3 (data/prompt-distilasi.md). Menulis data/model-hp/5c/akurasi.{json,md}."""
+    for p in (OUT5C / "akurasi.json", OUT5C / "akurasi.md"):
+        if p.exists():
+            sys.exit(f"{p} sudah ada, tidak ditimpa.")
+    pt = json.loads((OUT5C / "pt.json").read_text(encoding="utf-8"))
+    ox = json.loads((OUT5C / "onnx.json").read_text(encoding="utf-8"))
+    b5 = json.loads((OUT5B / "onnx.json").read_text(encoding="utf-8"))
+    p5 = json.loads((OUT5B / "pt.json").read_text(encoding="utf-8"))
+    lama = json.loads(LAMA.read_text(encoding="utf-8"))
+
+    def dari_lama(r):
+        return dict(metrik={k: v for k, v in r.items() if k != "conf025"}, conf025=r["conf025"])
+
+    baris_def = [("hp-kotak-v3-416 (sekarang)", "ONNX fp16", b5["box_onnx"]["416_fp16"]),
+                 ("**hp-kotak-v3-416-distil**", "ONNX fp16 (resmi)", ox["box_onnx"]["416_fp16"]),
+                 ("hp-kotak-v3-416 (sekarang)", ".pt", p5["box_pt"]["416"]),
+                 ("**hp-kotak-v3-416-distil**", ".pt", pt["box_pt"]["416"]),
+                 ("hp-kotak-v3-416 (sekarang)", "ONNX fp32", b5["box_onnx"]["416_fp32"]),
+                 ("**hp-kotak-v3-416-distil**", "ONNX fp32", ox["box_onnx"]["416_fp32"]),
+                 ("lama (latih 640), dijalankan 640", "ONNX fp32", dari_lama(lama["box_onnx"]["640_fp32"]))]
+    md = ["# Tahap 5c, Bagian B: akurasi hp-kotak-v3-416-distil (val v2, 54 frame)", "",
+          "Angka resmi = ONNX fp16 pada 416 lewat jalur app.js. C2 (ensemble laptop) mAP50 0.613, tidak jalan di HP, tidak dievaluasi ulang di sini.", "",
+          "| model | jalur | mAP50 | mAP50-95 | F1 | AP50 tangga | AP50 tepian | AP50 orang | AP50 pilar | recall dekat 0.25 | TP/FP/FN 0.25 | n prediksi |",
+          "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for model, jalur, r in baris_def:
+        m, c = r["metrik"], r["conf025"]
+        k, rd = m["kelas"], c["recall_dekat"]
+        md.append(f"| {model} | {jalur} | {f3(m['mAP50'])} | {f3(m['mAP50_95'])} | {f3(m['F1'])} | "
+                  + " | ".join(f3(k.get(n, {}).get("AP50")) for n in ("tangga", "tepian", "orang", "pilar"))
+                  + f" | {rd['ditemukan']}/{rd['gt']} ({f3(rd['recall'])}) | {c['total']['tp']}/{c['total']['fp']}/{c['total']['fn']} | {m['n_prediksi']} |")
+    kol = [("sekarang 416 fp16", b5["box_onnx"]["416_fp16"]), ("distil 416 fp16", ox["box_onnx"]["416_fp16"]),
+           ("lama 640 fp32", dari_lama(lama["box_onnx"]["640_fp32"]))]
+    md += ["", "### AP50 per kelas (ONNX)", "", "| kelas | n | " + " | ".join(k for k, _ in kol) + " |", "|---|---|" + "---|" * len(kol)]
+    for k, v in kol[2][1]["metrik"]["kelas"].items():
+        md.append(f"| {'**' + k + '**' if k in PENTING + ('pilar',) else k}{' *' if v['n'] < eb.LOW_N else ''} | {v['n']} | "
+                  + " | ".join(f3(r["metrik"]["kelas"].get(k, {}).get("AP50")) for _, r in kol) + " |")
+    md += ["", "\\* n < 20 instance di val: angka kelas ini goyah.", ""]
+    d = ox["box_onnx"]["416_fp16"]
+    mAP, orang, rec = d["metrik"]["mAP50"], d["metrik"]["kelas"]["orang"]["AP50"], d["conf025"]["recall_dekat"]["ditemukan"]
+    a1, a2, a3 = mAP >= ATURAN_5C["box_mAP50"], orang >= ATURAN_5C["orang_AP50"], rec >= ATURAN_5C["recall_dekat"]
+    ganti = bool(a1 and a2 and a3)
+    md += ["## Aturan 0.3 (ONNX fp16, ditulis sebelum ada hasil)", "",
+           "| aturan | batas | distil | hasil |", "|---|---|---|---|",
+           f"| 1. mAP50 val v2 | >= 0.460 | {mAP:.4f} | {'LOLOS' if a1 else 'GAGAL'} |",
+           f"| 2. AP50 orang | >= 0.589 | {orang:.4f} | {'LOLOS' if a2 else 'GAGAL'} |",
+           f"| 3. recall dekat (y2 >= 0.65) conf 0.25 | >= 30/72 | {rec}/72 | {'LOLOS' if a3 else 'GAGAL'} |", "",
+           f"**Keputusan: {'GANTI hp-kotak-v3-416 dengan hp-kotak-v3-416-distil' if ganti else 'PERTAHANKAN hp-kotak-v3-416'}.**"]
+    tulis(OUT5C / "akurasi.json", dict(aturan=ATURAN_5C, box_onnx=ox["box_onnx"], box_pt=pt["box_pt"], cek_jumlah=ox["cek_jumlah"],
+                                       keputusan=dict(aturan1=bool(a1), aturan2=bool(a2), aturan3=bool(a3), ganti=ganti,
+                                                      mAP50=mAP, orang_AP50=orang, recall_dekat=rec)))
+    (OUT5C / "akurasi.md").write_text("\n".join(md) + "\n", encoding="utf-8")
+    print("\n".join(md[-9:]))
+
+
 # ---------------------------------------------------------------- laporan
 def f3(x):
     return "-" if x is None else f"{x:.3f}"
@@ -438,7 +536,9 @@ def bagian_laporan():
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--bagian", choices=["pt", "onnx", "laporan", "hp-pt", "hp-onnx", "hp-laporan"], required=True)
+    ap.add_argument("--bagian", choices=["pt", "onnx", "laporan", "hp-pt", "hp-onnx", "hp-laporan",
+                                         "distil-pt", "distil-onnx", "distil-laporan"], required=True)
     b = ap.parse_args().bagian
     {"pt": bagian_pt, "onnx": bagian_onnx, "laporan": bagian_laporan,
-     "hp-pt": hp_pt, "hp-onnx": hp_onnx, "hp-laporan": hp_laporan}[b]()
+     "hp-pt": hp_pt, "hp-onnx": hp_onnx, "hp-laporan": hp_laporan,
+     "distil-pt": distil_pt, "distil-onnx": distil_onnx, "distil-laporan": distil_laporan}[b]()
