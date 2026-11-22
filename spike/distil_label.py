@@ -15,6 +15,8 @@ Gambar dan label dataset asli ditautkan keras (hardlink) atau disalin; dataset a
 
   venv\\Scripts\\python spike\\distil_label.py                 # ambang 0.50 -> data/dataset-distil-kotak-v3
   venv\\Scripts\\python spike\\distil_label.py --ambang 0.60   # -> data/dataset-distil-kotak-v3-t0.6
+  venv\\Scripts\\python spike\\distil_label.py --r2            # ronde 2: ambang per kelas = conf_kelas aplikasi (orang 0.60,
+                                                             # tepian 0.20, lain 0.25) -> data/dataset-distil-kotak-v3-r2
 """
 import argparse
 import csv
@@ -102,7 +104,10 @@ def simpan_label(path, pred, names, ambang):
     ids = {n: i for i, n in names.items()}
     baris, kotak = [], []
     for c, f, (x1, y1, x2, y2) in zip(pred["cls"], pred["conf"], pred["xyxy"]):
-        batas = AMBANG_ORANG if names[int(c)] == "orang" else ambang
+        if isinstance(ambang, dict):  # ronde 2: ambang per kelas
+            batas = ambang[names[int(c)]]
+        else:
+            batas = AMBANG_ORANG if names[int(c)] == "orang" else ambang
         if f < batas - 1e-9:
             continue
         w, h = pred["w"], pred["h"]
@@ -222,8 +227,9 @@ def pilih_lembar(simpan, names, n=30):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ambang", type=float, default=0.50)
+    ap.add_argument("--r2", action="store_true", help="ambang per kelas = conf_kelas config.yaml, keluaran bersufiks -r2")
     a = ap.parse_args()
-    suf = "" if abs(a.ambang - 0.50) < 1e-9 else f"-t{a.ambang:g}"
+    suf = "-r2" if a.r2 else ("" if abs(a.ambang - 0.50) < 1e-9 else f"-t{a.ambang:g}")
     out = ROOT / "data" / f"dataset-distil-kotak-v3{suf}"
     if out.exists():
         sys.exit(f"{out} sudah ada, tidak ditimpa.")
@@ -244,12 +250,17 @@ def main():
 
     t = muat_teacher()
     names = t["names"]
+    ambang = a.ambang
+    if a.r2:
+        ambang = {str(k): float(v) for k, v in t["cfg"]["conf_kelas"].items()}
+        assert set(ambang) == set(names.values()), "conf_kelas tidak cocok dengan nama kelas"
+        print("ambang per kelas (ronde 2):", ambang, flush=True)
     print("teacher:", [(Path(x["bobot"]).name, x["imgsz"]) for x in t["anggota"]], "kelas:", names, flush=True)
     teacher_prediksi(t, np.zeros((640, 480, 3), np.uint8))  # pemanasan
     hasil, t0 = [], time.perf_counter()
     for i, (folder, p) in enumerate(kolam):
         pred = teacher_prediksi(t, cv2.imread(str(p)))
-        baris, kotak = simpan_label(p, pred, names, a.ambang)
+        baris, kotak = simpan_label(p, pred, names, ambang)
         hasil.append((folder, p, kotak, baris))
         if (i + 1) % 200 == 0:
             print(f"  {i + 1}/{len(kolam)}  {time.perf_counter() - t0:.0f}s", flush=True)
@@ -288,7 +299,8 @@ def main():
     per_folder = Counter(f for f, _, _, _ in simpan)
     assert not any(f.startswith(EXCL_VAL + EXCL_TEST) for f in per_folder)
     assert not any(any(x in p.name for x in EXCL_DILARANG) for _, p, _, _ in simpan)
-    md = [f"# Tahap 5c, Bagian A: pseudo-label (ambang {a.ambang:g}, orang {AMBANG_ORANG:g})", "",
+    judul_ambang = ("per kelas " + ", ".join(f"{k} {v:g}" for k, v in ambang.items())) if a.r2 else f"ambang {a.ambang:g}, orang {AMBANG_ORANG:g}"
+    md = [f"# Tahap 5c, Bagian A: pseudo-label ({judul_ambang})", "",
           f"Kolam: {len(kolam)} frame. Dikecualikan: val {ex['val']}, test {ex['test']}, sudah berlabel manusia {ex['berlabel']}.",
           f"Teacher C2: {len(kolam)} frame dalam {detik:.0f} s ({detik / len(kolam):.2f} s/frame, 4 model, GPU). "
           f"Frame tanpa kotak: {len(kosong)} ({100 * len(kosong) / len(kolam):.1f}% kolam), disimpan {len(kosong_simpan)}"
@@ -303,7 +315,7 @@ def main():
         md.append(f"| {names[i]} | {pseudo_box.get(i, 0)} | {manusia.get(i, 0)} |")
     md += ["", f"Total kotak pseudo: {sum(pseudo_box.values())}; manusia: {sum(manusia.values())}."]
     (OUTDIR / f"laporan_label_palsu{suf}.md").write_text("\n".join(md) + "\n", encoding="utf-8")
-    lap_json.write_text(json.dumps(dict(ambang=a.ambang, kolam=len(kolam), dikecualikan=ex, per_folder=per, detik_teacher=detik,
+    lap_json.write_text(json.dumps(dict(ambang=ambang, kolam=len(kolam), dikecualikan=ex, per_folder=per, detik_teacher=detik,
                                          kosong=len(kosong), kosong_simpan=len(kosong_simpan), kosong_dipotong=kosong_dipotong,
                                          pseudo=len(simpan), pseudo_per_kelas={names[k]: v for k, v in pseudo_box.items()},
                                          manusia_per_kelas={names[k]: v for k, v in manusia.items()}), indent=1, ensure_ascii=False),

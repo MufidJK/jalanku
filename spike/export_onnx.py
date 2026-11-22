@@ -48,8 +48,9 @@ def ekspor_hp(a):
 
 def ekspor_distil(a):
     """Tahap 5c: hp-kotak-v3-416-distil_best.pt -> models/onnx/hp_box_416_distil[_fp16].onnx. Pengaturan sama dengan 5b. Tidak menimpa."""
-    pt_src = ROOT / "models" / "hp" / "hp-kotak-v3-416-distil_best.pt"
-    dst = a.out / f"hp_box_416_distil{'_fp16' if a.fp16 else ''}.onnx"
+    r2 = "-r2" if a.r2 else ""  # ronde 2: hp-kotak-v3-416-distil-r2_best.pt -> hp_box_416_distil_r2[_fp16].onnx
+    pt_src = ROOT / "models" / "hp" / f"hp-kotak-v3-416-distil{r2}_best.pt"
+    dst = a.out / f"hp_box_416_distil{r2.replace('-', '_')}{'_fp16' if a.fp16 else ''}.onnx"
     if dst.exists():
         print("sudah ada, lewati:", dst)
         return
@@ -75,6 +76,7 @@ def main():
                          "models/onnx/hp_{box,seg}_{320,416}[_fp16].onnx (fp32, atau fp16 bersama --fp16). Tidak pernah menimpa.")
     ap.add_argument("--distil", action="store_true",
                     help="Tahap 5c: ekspor models/hp/hp-kotak-v3-416-distil_best.pt ke models/onnx/hp_box_416_distil[_fp16].onnx. Tidak pernah menimpa.")
+    ap.add_argument("--r2", action="store_true", help="bersama --distil: ronde 2 (hp-kotak-v3-416-distil-r2)")
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
     if a.distil:

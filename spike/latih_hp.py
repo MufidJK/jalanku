@@ -38,6 +38,9 @@ RUNS = {
     # Tahap 5c (data/prompt-distilasi.md): sama dengan hp-kotak-v3-416, data = gabung-kotak-v3 + pseudo-label teacher C2
     "hp-kotak-v3-416-distil": dict(model="yolo26n.pt", data="data/dataset-distil-kotak-v3/data.yaml", epochs=100, patience=30,
                                    imgsz=416, batch=BATCH),
+    # Tahap 5c ronde 2: sama, pseudo-label dengan ambang per kelas = conf_kelas aplikasi (data/dataset-distil-kotak-v3-r2)
+    "hp-kotak-v3-416-distil-r2": dict(model="yolo26n.pt", data="data/dataset-distil-kotak-v3-r2/data.yaml", epochs=100, patience=30,
+                                      imgsz=416, batch=BATCH),
     "hp-seg-v3-320": dict(model="yolo26n-seg.pt", data=SEG, epochs=300, patience=100, imgsz=320, batch=BATCH),
     "hp-seg-v3-416": dict(model="yolo26n-seg.pt", data=SEG, epochs=300, patience=100, imgsz=416, batch=BATCH),
 }
