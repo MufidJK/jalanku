@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>JalanKu ukur HP</title>
+<title>JalanKu ukur HP 5b</title>
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; padding: 8px; background: #111; color: #eee; font: 14px/1.35 system-ui, sans-serif; }
@@ -19,11 +19,18 @@
   #fps { font-size: 22px; font-weight: bold; color: #7fe08f; }
   #out { width: 100%; height: 5em; font: 11px ui-monospace, Consolas, monospace; background: #222; color: #ccc; border: 1px solid #444; }
   #msg { color: #ffb86b; min-height: 1.3em; }
+  button.tes { background: #1f5fbf; color: #fff; border: 0; border-radius: 4px; }
+  button.tes:disabled { background: #444; }
+  #cd { font: 15px/1.4 ui-monospace, Consolas, monospace; color: #8ec5ff; min-height: 1.4em; margin: 4px 0; }
+  #out5 { width: 100%; height: 7em; font: 11px ui-monospace, Consolas, monospace; background: #1b2633; color: #cfe3ff; border: 1px solid #456; }
 </style>
 </head>
 <body>
-<h1>JalanKu Tahap 5a: ukur kecepatan di HP (onnxruntime-web)</h1>
+<h1>JalanKu Tahap 5b: ukur kecepatan di HP (onnxruntime-web)</h1>
 <div class="row">
+  <label>model
+    <select id="mdl"><option value="lama">lama (latih 640)</option><option value="baru">latih ulang (hp-*)</option></select>
+  </label>
   <label>imgsz
     <select id="sz"><option>320</option><option>416</option><option>640</option></select>
   </label>
@@ -43,12 +50,16 @@
   <label><input type="checkbox" id="useSeg" checked> seg</label>
   <button id="go" class="go">Start</button>
   <button id="copy">Copy results</button>
+  <button id="tes" class="tes">Tes 5 menit</button>
 </div>
 <div id="msg"></div>
+<div id="cd"></div>
 <div id="stage"><video id="vid" playsinline muted autoplay></video><canvas id="ov"></canvas></div>
 <div><span id="fps">- fps</span></div>
 <div id="stats">belum jalan</div>
-<textarea id="out" readonly placeholder="baris hasil muncul di sini (tombol Copy results)"></textarea>
+<textarea id="out" readonly placeholder="baris hasil 30 frame muncul di sini (tombol Copy results)"></textarea>
+<div class="row"><button id="copy5">Salin baris 5 menit</button></div>
+<textarea id="out5" readonly placeholder="baris hasil tes 5 menit muncul di sini setelah selesai"></textarea>
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/ort.webgpu.min.js"></script>
 <script src="app.js"></script>
 </body>

@@ -1,18 +1,22 @@
 "use strict";
-// JalanKu Tahap 5a: halaman UKUR (bukan app). box tiap frame + seg tiap N frame, fp32/fp16, WebGPU (wasm cadangan).
+// JalanKu Tahap 5a/5b: halaman UKUR (bukan app). box tiap frame + seg tiap N frame, fp32/fp16, WebGPU (wasm cadangan).
 // Mask seg TIDAK didekode dan logika peringatan TIDAK ada: angka di sini batas bawah biaya per frame.
+// 5b: pilihan model (lama latih 640 / latih ulang hp-*) dan tombol "Tes 5 menit" (ketahanan, tidak ada yang diubah di mode 5a).
 
 const ORT_VERSION = "1.31.1";
 const CONF = 0.25;
 const IOU = 0.7;
 const WINDOW = 30; // median dari N frame terakhir
+const TEST_MS = 300000; // tes ketahanan: 5 menit
+const MODEL_PREFIX = { lama: "", baru: "hp_" }; // lama: box_320.onnx ; baru: hp_box_320.onnx
 const BOX_NAMES = ["pilar", "pohon", "tepian", "orang", "tanaman_pot", "kursi", "kendaraan", "tangga"];
 const SEG_NAMES = ["jalur_jalan", "jalan_kendaraan", "tangga"];
 const INV255 = 1 / 255;
 
 const $ = (id) => document.getElementById(id);
-const el = { sz: $("sz"), be: $("be"), prec: $("prec"), segN: $("segN"), pre: $("pre"), useBox: $("useBox"), useSeg: $("useSeg"),
-  go: $("go"), copy: $("copy"), msg: $("msg"), vid: $("vid"), ov: $("ov"), fps: $("fps"), stats: $("stats"), out: $("out") };
+const el = { sz: $("sz"), be: $("be"), prec: $("prec"), segN: $("segN"), pre: $("pre"), mdl: $("mdl"), useBox: $("useBox"), useSeg: $("useSeg"),
+  go: $("go"), copy: $("copy"), msg: $("msg"), vid: $("vid"), ov: $("ov"), fps: $("fps"), stats: $("stats"), out: $("out"),
+  tes: $("tes"), copy5: $("copy5"), cd: $("cd"), out5: $("out5") };
 const params = new URLSearchParams(location.search);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const median = (a) => { if (!a.length) return NaN; const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
@@ -36,6 +40,9 @@ let loaded = null;   // { key, backend, precRun, precNote, sessions:{box,seg}, l
 let sample = [];     // satu entri per frame
 let lastRes = { w: 0, h: 0 };
 let lastNBox = 0, lastNSeg = 0, frameIdx = 0, preRun = "-";
+// tes ketahanan (5b): rec = satu entri per frame sepanjang tes (bukan hanya 30 terakhir)
+let rec = [], recOn = false, recT0 = null, errCount = 0, lastErr = "", hiddenCount = 0, testRunning = false;
+let batStart = null;
 
 // ---------- preprocess: letterbox ala Ultralytics (rasio tetap, pad 114) -> float32 NCHW 0..1 ----------
 // Geometri sama persis dengan versi spike pertama: r = min(sz/h, sz/w), offset Math.round((sz - n)/2 - 0.1).
@@ -201,26 +208,28 @@ function postprocess(out0, nc) { return nms(decode(out0.data, nc, out0.dims[2]))
 
 // ---------- load model ----------
 function setMsg(t) { el.msg.textContent = t || ""; }
-async function createSession(name, sz, backend, prec) {
-  const url = `/models/${name}_${sz}${prec === "fp16" ? "_fp16" : ""}.onnx`;
+async function createSession(name, sz, backend, prec, mdl, files) {
+  const url = `/models/${MODEL_PREFIX[mdl]}${name}_${sz}${prec === "fp16" ? "_fp16" : ""}.onnx`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${url} tidak ada (HTTP ${res.status})`);
-  return ort.InferenceSession.create(await res.arrayBuffer(), { executionProviders: [backend], graphOptimizationLevel: "all" });
+  const s = await ort.InferenceSession.create(await res.arrayBuffer(), { executionProviders: [backend], graphOptimizationLevel: "all" });
+  files.push(url.slice("/models/".length)); // hanya dicatat kalau benar-benar termuat
+  return s;
 }
 async function warmup(session, sz) {
   const t = new ort.Tensor("float32", new Float32Array(3 * sz * sz).fill(0.45), [1, 3, sz, sz]);
   for (let i = 0; i < 2; i++) await session.run({ images: t }); // kompilasi shader (webgpu) / init thread
 }
-async function loadOnce(backend, sz, wantBox, wantSeg, prec) {
-  const sessions = {};
+async function loadOnce(backend, sz, wantBox, wantSeg, prec, mdl) {
+  const sessions = {}, files = [];
   try {
     const t0 = performance.now();
-    if (wantBox) sessions.box = await createSession("box", sz, backend, prec);
-    if (wantSeg) sessions.seg = await createSession("seg", sz, backend, prec);
+    if (wantBox) sessions.box = await createSession("box", sz, backend, prec, mdl, files);
+    if (wantSeg) sessions.seg = await createSession("seg", sz, backend, prec, mdl, files);
     const loadMs = performance.now() - t0;
     const t1 = performance.now();
     for (const k of Object.keys(sessions)) await warmup(sessions[k], sz);
-    return { sessions, loadMs, warmMs: performance.now() - t1 };
+    return { sessions, files, loadMs, warmMs: performance.now() - t1 };
   } catch (e) {
     for (const s of Object.values(sessions)) { try { await s.release(); } catch (_) {} }
     throw e;
@@ -231,8 +240,8 @@ async function releaseLoaded() {
   for (const s of Object.values(loaded.sessions)) { try { await s.release(); } catch (e) {} }
   loaded = null;
 }
-async function ensureLoaded(sz, wantBox, wantSeg, pref, prec) {
-  const key = `${pref}|${sz}|${wantBox}|${wantSeg}|${prec}`;
+async function ensureLoaded(sz, wantBox, wantSeg, pref, prec, mdl) {
+  const key = `${pref}|${sz}|${wantBox}|${wantSeg}|${prec}|${mdl}`;
   if (loaded && loaded.key === key) return;
   await releaseLoaded();
   const order = pref === "auto" ? (navigator.gpu ? ["webgpu", "wasm"] : ["wasm"]) : [pref];
@@ -242,8 +251,8 @@ async function ensureLoaded(sz, wantBox, wantSeg, pref, prec) {
     for (const p of precs) {
       try {
         setMsg(`memuat model (${be}, ${p}) ...`);
-        const r = await loadOnce(be, sz, wantBox, wantSeg, p);
-        loaded = { key, backend: be, precRun: p, precNote: notes.join("; "), ...r };
+        const r = await loadOnce(be, sz, wantBox, wantSeg, p, mdl);
+        loaded = { key, backend: be, backendWanted: pref, precWanted: prec, precRun: p, precNote: notes.join("; "), ...r };
         setMsg(notes.length ? "CATATAN: " + loaded.precNote : "");
         return;
       } catch (e) {
@@ -285,34 +294,43 @@ async function loop(sz, segN) {
   while (running) {
     const v = el.vid;
     if (v.readyState < 2 || !v.videoWidth) { await sleep(20); continue; }
-    const t0 = performance.now();
-    const { g, tensor } = preFn(v, sz);
-    lastRes = { w: g.w, h: g.h };
-    const t1 = performance.now();
-    let boxMs = NaN, boxNms = NaN, segMs = NaN, segNms = NaN, dets = [];
-    if (S.box) {
-      const a = performance.now();
-      const o = await S.box.run({ images: tensor });
-      const b = performance.now();
-      dets = postprocess(o[S.box.outputNames[0]], BOX_NAMES.length);
-      boxMs = b - a; boxNms = performance.now() - b;
-      lastNBox = dets.length;
+    try {
+      const t0 = performance.now();
+      const { g, tensor } = preFn(v, sz);
+      lastRes = { w: g.w, h: g.h };
+      const t1 = performance.now();
+      let boxMs = NaN, boxNms = NaN, segMs = NaN, segNms = NaN, dets = [];
+      if (S.box) {
+        const a = performance.now();
+        const o = await S.box.run({ images: tensor });
+        const b = performance.now();
+        dets = postprocess(o[S.box.outputNames[0]], BOX_NAMES.length);
+        boxMs = b - a; boxNms = performance.now() - b;
+        lastNBox = dets.length;
+      }
+      const segNow = S.seg && frameIdx % segN === 0;
+      if (segNow) {
+        const a = performance.now();
+        const o = await S.seg.run({ images: tensor });
+        const b = performance.now();
+        lastNSeg = postprocess(o[S.seg.outputNames[0]], SEG_NAMES.length).length; // 32 koef mask diabaikan
+        segMs = b - a; segNms = performance.now() - b;
+      }
+      const d0 = performance.now();
+      drawBoxes(dets, g);
+      const end = performance.now();
+      sample.push({ pre: t1 - t0, box: boxMs, boxNms, seg: segMs, segNms, draw: end - d0, total: end - t0,
+        totalSeg: segNow ? end - t0 : NaN, totalNoSeg: segNow ? NaN : end - t0, end });
+      if (sample.length > WINDOW) sample.shift();
+      if (recOn) {
+        if (recT0 === null) recT0 = t0; // jam tes mulai di frame pertama (model dan kamera sudah siap)
+        rec.push({ end, pre: t1 - t0, box: boxMs, seg: segMs });
+      }
+      frameIdx++;
+    } catch (e) { // 5b: galat per frame dihitung, loop tidak mati diam-diam
+      errCount++; lastErr = errText(e); console.error(e);
+      await sleep(50);
     }
-    const segNow = S.seg && frameIdx % segN === 0;
-    if (segNow) {
-      const a = performance.now();
-      const o = await S.seg.run({ images: tensor });
-      const b = performance.now();
-      lastNSeg = postprocess(o[S.seg.outputNames[0]], SEG_NAMES.length).length; // 32 koef mask diabaikan
-      segMs = b - a; segNms = performance.now() - b;
-    }
-    const d0 = performance.now();
-    drawBoxes(dets, g);
-    const end = performance.now();
-    sample.push({ pre: t1 - t0, box: boxMs, boxNms, seg: segMs, segNms, draw: end - d0, total: end - t0,
-      totalSeg: segNow ? end - t0 : NaN, totalNoSeg: segNow ? NaN : end - t0, end });
-    if (sample.length > WINDOW) sample.shift();
-    frameIdx++;
     await sleep(0); // lepas ke browser (render video / UI)
   }
 }
@@ -330,7 +348,8 @@ function resultLine() {
   const s = snapshot(), L = loaded;
   const on = (x) => (x ? "on" : "off");
   return [
-    `JalanKu5a ort=${ORT_VERSION}`,
+    `JalanKu5b ort=${ORT_VERSION}`,
+    `model=${el.mdl.value} file=${L ? L.files.join(",") : "-"}`,
     `imgsz=${el.sz.value}`, `presisi=${el.prec.value}->${L ? L.precRun : "-"}`, `backend=${L ? L.backend : "-"}`,
     `segN=${el.segN.value}`, `pre=${preRun}`, `box=${on(L && L.sessions.box)} seg=${on(L && L.sessions.seg)}`,
     `gpuF16=${gpuF16}`, `threads=${threads}`, `cam=${lastRes.w}x${lastRes.h}`,
@@ -346,7 +365,8 @@ function render() {
   const s = snapshot(), L = loaded;
   el.fps.textContent = `${fmt(s.fps, 2)} fps`;
   el.stats.textContent =
-`backend      : ${L ? L.backend : "-"}   presisi diminta ${el.prec.value}, JALAN ${L ? L.precRun : "-"}   (gpu shader-f16: ${gpuF16})
+`model        : ${el.mdl.value}   file ${L ? L.files.join(", ") : "-"}
+backend      : ${L ? L.backend : "-"}   presisi diminta ${el.prec.value}, JALAN ${L ? L.precRun : "-"}   (gpu shader-f16: ${gpuF16})
 imgsz        : ${el.sz.value}   kamera ${lastRes.w}x${lastRes.h}   seg tiap ${el.segN.value} frame   preprocess ${preRun}
 load model   : ${fmt(L && L.loadMs, 0)} ms (+ warm-up ${fmt(L && L.warmMs, 0)} ms), sekali
 --- median ${WINDOW} frame terakhir (n=${s.n}, seg jalan di ${s.nSeg}) ---
@@ -362,17 +382,20 @@ setInterval(() => { if (running) render(); }, 1000);
 async function takeWake() {
   try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) { console.warn("wakeLock", e); }
 }
-document.addEventListener("visibilitychange", () => { if (running && document.visibilityState === "visible") takeWake(); });
+document.addEventListener("visibilitychange", () => {
+  if (recOn && document.visibilityState === "hidden") hiddenCount++; // tes tidak sah kalau layar mati / pindah aplikasi
+  if (running && document.visibilityState === "visible") takeWake();
+});
 
 // ---------- start / stop ----------
-const CONTROLS = ["sz", "be", "prec", "segN", "pre", "useBox", "useSeg"];
+const CONTROLS = ["sz", "be", "prec", "segN", "pre", "mdl", "useBox", "useSeg"];
 function lockControls(b) { for (const k of CONTROLS) el[k].disabled = b; }
 async function start() {
   if (!el.useBox.checked && !el.useSeg.checked) { setMsg("pilih minimal satu model (box/seg)"); return; }
   lockControls(true); el.go.disabled = true;
   try {
     const sz = +el.sz.value;
-    await ensureLoaded(sz, el.useBox.checked, el.useSeg.checked, el.be.value, el.prec.value);
+    await ensureLoaded(sz, el.useBox.checked, el.useSeg.checked, el.be.value, el.prec.value, el.mdl.value);
     preFn = pickPre(params.get("pre") === "lama" ? "lama" : el.pre.value);
     stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: { ideal: "environment" }, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
@@ -388,7 +411,7 @@ async function start() {
   el.go.disabled = false;
 }
 async function stop() {
-  running = false;
+  running = false; recOn = false;
   await sleep(50);
   render();
   el.out.value = resultLine();
@@ -398,7 +421,7 @@ async function stop() {
   el.go.textContent = "Start"; el.go.classList.remove("on");
   lockControls(false);
 }
-el.go.addEventListener("click", () => (running ? stop() : start()));
+el.go.addEventListener("click", () => (testRunning ? finishTest(true) : running ? stop() : start()));
 el.copy.addEventListener("click", async () => {
   const line = running || !el.out.value ? resultLine() : el.out.value;
   el.out.value = line;
@@ -406,10 +429,118 @@ el.copy.addEventListener("click", async () => {
   catch (e) { el.out.select(); document.execCommand("copy"); setMsg("tersalin (cara lama); kalau gagal, salin teks di kotak bawah"); }
 });
 
+// ---------- tes ketahanan 5 menit (5b) ----------
+// FPS per menit = median dari nilai fps blok 30 frame berurutan (tiap blok: 29 selang / waktu, sama dengan fps 30 frame di 5a),
+// blok masuk menit tempat frame terakhirnya berakhir. "menit 3-5" = 120 s sampai 300 s sejak frame pertama.
+// Dengan ?dur=DETIK tes diperpendek (untuk uji di laptop); satu "menit" = dur/5.
+const testMs = params.get("dur") ? +params.get("dur") * 1000 : TEST_MS;
+const minMs = testMs / 5;
+async function batInfo() {
+  try { if (!navigator.getBattery) return "n/a"; const b = await navigator.getBattery(); return `${Math.round(b.level * 100)}%${b.charging ? "+cas" : ""}`; }
+  catch (e) { return "n/a"; }
+}
+function blocks(frames) {
+  const out = [];
+  for (let i = 0; i + WINDOW <= frames.length; i += WINDOW) {
+    const a = frames[i], b = frames[i + WINDOW - 1];
+    out.push({ fps: ((WINDOW - 1) * 1000) / (b.end - a.end), t: b.end - recT0 });
+  }
+  return out;
+}
+function enduranceLine(batEnd) {
+  const L = loaded;
+  const frames = rec.filter((r) => r.end - recT0 < testMs);
+  const bl = blocks(frames);
+  const perMin = [0, 1, 2, 3, 4].map((k) => median(bl.filter((b) => b.t >= k * minMs && b.t < (k + 1) * minMs).map((b) => b.fps)));
+  const late = frames.filter((r) => r.end - recT0 >= 2 * minMs);
+  const m35 = median(bl.filter((b) => b.t >= 2 * minMs).map((b) => b.fps));
+  const mean35 = late.length > 1 ? ((late.length - 1) * 1000) / (late[late.length - 1].end - late[0].end) : NaN;
+  const col = (k) => median(late.map((r) => r[k]).filter(Number.isFinite));
+  const fallback = L && L.precNote ? "ya" : "tidak";
+  const on = (x) => (x ? "on" : "off");
+  return [
+    `JalanKu5b-TAHAN ort=${ORT_VERSION}`,
+    `durasi=${(testMs / 1000).toFixed(0)}s`,
+    `model=${el.mdl.value} file=${L ? L.files.join(",") : "-"}`,
+    `imgsz=${el.sz.value}`, `presisi=${el.prec.value}->${L ? L.precRun : "-"}`, `backend=${L ? L.backend : "-"}`,
+    `segN=${el.segN.value}`, `pre=${preRun}`, `box=${on(L && L.sessions.box)} seg=${on(L && L.sessions.seg)}`,
+    `cam=${lastRes.w}x${lastRes.h}`, `gpuF16=${gpuF16}`,
+    `fps_menit(median blok30) m1=${fmt(perMin[0], 2)} m2=${fmt(perMin[1], 2)} m3=${fmt(perMin[2], 2)} m4=${fmt(perMin[3], 2)} m5=${fmt(perMin[4], 2)}`,
+    `FPS_m3-5=${fmt(m35, 2)}`, `(rata2 m3-5=${fmt(mean35, 2)})`, `fps_30awal=${fmt(bl.length ? bl[0].fps : NaN, 2)}`,
+    `med_m3-5 ms: pre=${fmt(col("pre"))} box=${fmt(col("box"))} seg=${fmt(col("seg"))}`,
+    `frame=${frames.length} blok=${bl.length}`,
+    `fallback=${fallback}`, `galat=${errCount}${lastErr ? " (" + lastErr + ")" : ""}`, `layar_tersembunyi=${hiddenCount}`,
+    `baterai=${batStart}->${batEnd}`,
+    ...(L && L.precNote ? [`catatan=${L.precNote}`] : []),
+    `UA=${navigator.userAgent}`,
+  ].join(" | ");
+}
+let testTimer = null, testDone = null;
+function currentMinuteFps() {
+  if (recT0 === null || !rec.length) return NaN;
+  const k = Math.min(4, Math.floor((rec[rec.length - 1].end - recT0) / minMs));
+  const f = rec.filter((r) => { const t = r.end - recT0; return t >= k * minMs && t < (k + 1) * minMs; });
+  return f.length > 1 ? ((f.length - 1) * 1000) / (f[f.length - 1].end - f[0].end) : NaN;
+}
+async function finishTest(aborted) {
+  clearInterval(testTimer); testTimer = null; testRunning = false;
+  if (running) await stop(); else recOn = false;
+  el.tes.disabled = false;
+  if (aborted) { el.cd.textContent = "tes dibatalkan (Stop ditekan). Tidak ada hasil."; if (testDone) testDone(null); return; }
+  const line = enduranceLine(await batInfo());
+  el.out5.value = line;
+  el.cd.textContent = "SELESAI. Baris hasil ada di kotak bawah.";
+  try { await navigator.clipboard.writeText(line); setMsg("baris 5 menit tersalin ke clipboard"); }
+  catch (e) { setMsg("belum tersalin otomatis: tekan 'Salin baris 5 menit' atau salin teks di kotak bawah"); }
+  if (testDone) testDone(line);
+}
+async function startTest() {
+  if (running || testRunning) return;
+  rec = []; recOn = true; recT0 = null; errCount = 0; lastErr = ""; hiddenCount = 0; el.out5.value = "";
+  el.tes.disabled = true; el.cd.textContent = "memuat model dan kamera ...";
+  batStart = await batInfo();
+  await start();
+  if (!running) { recOn = false; el.tes.disabled = false; el.cd.textContent = "gagal mulai: " + el.msg.textContent; if (testDone) testDone(null); return; }
+  testRunning = true;
+  testTimer = setInterval(() => {
+    if (recT0 === null) { el.cd.textContent = "menunggu frame pertama ..."; return; }
+    const t = performance.now() - recT0;
+    if (t >= testMs) { finishTest(false); return; }
+    const k = Math.min(4, Math.floor(t / minMs));
+    el.cd.textContent = `TES BERJALAN: sisa ${Math.ceil((testMs - t) / 1000)} s | menit ${k + 1}/5 | fps menit ini ${fmt(currentMinuteFps(), 2)} | frame ${rec.length}`;
+  }, 500);
+}
+el.tes.addEventListener("click", startTest);
+el.copy5.addEventListener("click", async () => {
+  if (!el.out5.value) { setMsg("belum ada hasil tes 5 menit"); return; }
+  try { await navigator.clipboard.writeText(el.out5.value); setMsg("baris 5 menit tersalin ke clipboard"); }
+  catch (e) { el.out5.select(); document.execCommand("copy"); setMsg("tersalin (cara lama); kalau gagal, salin teks di kotak"); }
+});
+
+// model baru (hp-*) hanya ada 320 dan 416
+function syncMdl() {
+  const baru = el.mdl.value === "baru";
+  for (const o of el.sz.options) o.disabled = baru && o.value === "640";
+  if (baru && el.sz.value === "640") el.sz.value = "416";
+}
+el.mdl.addEventListener("change", syncMdl);
+
 // ---------- mode otomatis untuk tes di laptop ----------
+// ?tes5=1 (+ sz, be, prec, segN, pre, mdl, dur=DETIK) -> jalankan tes ketahanan lalu POST /report
 // ?auto=DETIK&sz=320&be=webgpu&prec=fp32&segN=2&pre=webgl|2d|lama&box=1&seg=1  -> POST /report satu baris hasil
 (async function auto() {
-  for (const k of ["sz", "be", "prec", "segN", "pre"]) if (params.get(k) && params.get(k) !== "lama") el[k].value = params.get(k);
+  for (const k of ["mdl", "sz", "be", "prec", "segN", "pre"]) if (params.get(k) && !(k === "pre" && params.get(k) === "lama")) el[k].value = params.get(k);
+  syncMdl();
+  if (params.get("tes5")) {
+    el.useBox.checked = params.get("box") !== "0";
+    el.useSeg.checked = params.get("seg") !== "0";
+    const fin = new Promise((r) => { testDone = r; });
+    startTest();
+    const line = await fin;
+    await fetch("/report", { method: "POST", body: line || "TES5 GAGAL: " + el.msg.textContent + " " + el.cd.textContent });
+    document.title = "DONE";
+    return;
+  }
   if (!params.get("auto")) return;
   el.useBox.checked = params.get("box") !== "0";
   el.useSeg.checked = params.get("seg") !== "0";

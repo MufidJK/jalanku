@@ -1,6 +1,6 @@
 """Tahap 5a, Bagian A: akurasi box + seg pada imgsz 320 / 416 (data/prompt-model-hp.md section 3). VAL v2 saja.
 
-Empat langkah, masing-masing di venv yang punya paketnya (dijalankan dari root repo):
+Tahap 5b: bagian hp-pt / hp-onnx / hp-laporan (model latih ulang, keluaran ke data/model-hp/5b/). Tahap 5a: empat langkah, masing-masing di venv yang punya paketnya (dijalankan dari root repo):
 
   venv\\Scripts\\python spike\\eval_hp.py --bagian pt         # GPU: box .pt 640/416/320 (jalur t1_val), seg Ultralytics val 640/416/320
   venv-export\\Scripts\\python spike\\export_onnx.py --fp16   # (opsional) {box,seg}_{320,416}_fp16.onnx
@@ -145,14 +145,14 @@ def bagian_pt():
 
 
 # ---------------------------------------------------------------- bagian onnx (CPU, venv-export)
-def hitung_cek(sz, kind, pt_name, imgs, names):
+def hitung_cek(sz, kind, pt_name, imgs, names, prefix=""):
     """Jumlah deteksi conf >= 0.25 pada 3 frame: .pt vs ONNX fp32 vs ONNX fp16 (gambar letterbox yang sama)."""
     import cv2
     from ultralytics import YOLO
 
     pt = YOLO(str(ROOT / pt_name))
     nc = len(names)
-    files = {"fp32": ONNX / f"{kind}_{sz}.onnx", "fp16": ONNX / f"{kind}_{sz}_fp16.onnx"}
+    files = {"fp32": ONNX / f"{prefix}{kind}_{sz}.onnx", "fp16": ONNX / f"{prefix}{kind}_{sz}_fp16.onnx"}
     sess = {k: sesi(v) for k, v in files.items() if v.exists()}
     rows = []
     for p in imgs:
@@ -191,6 +191,164 @@ def bagian_onnx():
             print(f"== cek jumlah {kind} {sz}", flush=True)
             h["cek_jumlah"][f"{kind}_{sz}"] = hitung_cek(sz, kind, pt_name, im[:3], nm)
     tulis(out, h)
+
+
+# ---------------------------------------------------------------- Tahap 5b (model latih ulang, ukuran sendiri)
+OUT5B = ROOT / "data" / "model-hp" / "5b"
+HP_BOX = "models/hp/hp-kotak-v3-{sz}_best.pt"
+HP_SEG = "models/hp/hp-seg-v3-{sz}_best.pt"
+LAMA = OUT / "akurasi.json"  # angka 5a (model lama, dilatih 640)
+
+
+def hp_pt():
+    """GPU: box .pt dan seg Ultralytics val pada ukuran latihnya (320 / 416). VAL v2 saja."""
+    out = OUT5B / "pt.json"
+    if out.exists():
+        sys.exit(f"{out} sudah ada, tidak ditimpa.")
+    names, imgs, lab_dir = er.cek_val(er.YK)
+    er.pasang_imgsz()
+    h = dict(sumber="val v2 (er.cek_val(er.YK), 54 frame)", box_pt={}, seg_ultra={})
+    for sz in SIZES:
+        bp, sp = HP_BOX.format(sz=sz), HP_SEG.format(sz=sz)
+        if not (ROOT / bp).exists() or not (ROOT / sp).exists():
+            print(f"bobot {sz} belum lengkap, dilewati")
+            continue
+        nm = f"hp5b-box-{sz}"
+        er.MODEL[nm] = ("detect", er.YK, bp, sz)
+        print(f"== box .pt (latih ulang) imgsz {sz}", flush=True)
+        pred, _ = ev.prediksi(nm, imgs, conf=CONF_MAP)
+        h["box_pt"][str(sz)] = ringkas_box(names, imgs, lab_dir, pred)
+        print(f"   mAP50 {h['box_pt'][str(sz)]['metrik']['mAP50']:.4f}", flush=True)
+        nm = f"hp5b-seg-{sz}"
+        er.IMGSZ["nilai"] = sz
+        eb.RUNS[nm] = ("segment", er.YS)
+        print(f"== seg Ultralytics val (latih ulang) imgsz {sz}", flush=True)
+        u = eb.jalankan_val(nm, ROOT / sp, OUT5B / "runs")
+        u["imgsz"] = sz
+        h["seg_ultra"][str(sz)] = u
+        print(f"   mask mAP50 {u['mask']['mAP50']:.4f} R {u['mask']['R']:.3f}", flush=True)
+    tulis(out, h)
+
+
+def hp_onnx():
+    """CPU: box ONNX fp32 + fp16 (jalur app.js) pada ukuran latihnya + cek jumlah deteksi .pt vs ONNX (box dan seg)."""
+    out = OUT5B / "onnx.json"
+    if out.exists():
+        sys.exit(f"{out} sudah ada, tidak ditimpa.")
+    names, imgs, lab_dir = er.cek_val(er.YK)
+    names_s, imgs_s, _ = eb.info_val(er.YS)
+    h = dict(sumber="val v2 (er.cek_val(er.YK), 54 frame)", jalur="letterbox app.js + NMS per kelas IoU 0.7 + ensemble_val.metrik",
+             box_onnx={}, cek_jumlah={})
+    for sz in SIZES:
+        for prec in ("fp32", "fp16"):
+            f = ONNX / (f"hp_box_{sz}.onnx" if prec == "fp32" else f"hp_box_{sz}_fp16.onnx")
+            if not f.exists():
+                continue
+            print(f"== box ONNX latih ulang {sz} {prec}", flush=True)
+            pred, ms = prediksi_onnx(f, sz, imgs, len(names))
+            r = ringkas_box(names, imgs, lab_dir, pred)
+            r["cpu_ms_median"] = ms
+            h["box_onnx"][f"{sz}_{prec}"] = r
+            print(f"   mAP50 {r['metrik']['mAP50']:.4f} mAP50-95 {r['metrik']['mAP50_95']:.4f} n_pred {r['metrik']['n_prediksi']}", flush=True)
+        for kind, pt_name, nm, im in (("box", HP_BOX.format(sz=sz), names, imgs), ("seg", HP_SEG.format(sz=sz), names_s, imgs_s)):
+            if not (ONNX / f"hp_{kind}_{sz}.onnx").exists():
+                continue
+            print(f"== cek jumlah {kind} {sz}", flush=True)
+            h["cek_jumlah"][f"{kind}_{sz}"] = hitung_cek(sz, kind, pt_name, im[:3], nm, prefix="hp_")
+    tulis(out, h)
+
+
+def hp_laporan():
+    """Tabel 5b: model lama pada ukuran S (angka 5a) vs latih ulang pada S, plus rujukan 640. Aturan 1 (fp16 resmi) dan 2."""
+    for p in (OUT5B / "akurasi.json", OUT5B / "akurasi.md"):
+        if p.exists():
+            sys.exit(f"{p} sudah ada, tidak ditimpa.")
+    pt = json.loads((OUT5B / "pt.json").read_text(encoding="utf-8"))
+    ox = json.loads((OUT5B / "onnx.json").read_text(encoding="utf-8"))
+    lama = json.loads(LAMA.read_text(encoding="utf-8"))
+    ukuran = [str(s) for s in SIZES if str(s) in pt["box_pt"] and f"{s}_fp16" in ox["box_onnx"] and str(s) in pt["seg_ultra"]]
+    hasil = dict(aturan=ATURAN, referensi=REF, per_ukuran={})
+    md = ["# Tahap 5b, Bagian B: akurasi model latih ulang (val v2, 54 frame)", "",
+          "Model lama = r2-kotak-v3 / r2-seg-v3 (dilatih 640), dijalankan pada S (angka 5a, `data/model-hp/akurasi.json`). "
+          "Latih ulang = hp-kotak-v3-S / hp-seg-v3-S (data dan pengaturan sama, hanya imgsz). "
+          "Angka resmi box = ONNX fp16 pada S (jalur app.js). Seleksi best checkpoint dan evaluasi memakai val yang sama "
+          "(optimis, sama dengan ronde sebelumnya).", "",
+          "## Box", "",
+          "| imgsz | model | jalur | mAP50 | mAP50-95 | F1 | AP50 tangga | AP50 tepian | AP50 orang | AP50 pilar | recall dekat 0.25 | TP/FP/FN 0.25 | n prediksi |",
+          "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+
+    def baris(sz, model, jalur, r):
+        m, c = r["metrik"], r["conf025"]
+        k = m["kelas"]
+        rd = c["recall_dekat"]
+        md.append(f"| {sz} | {model} | {jalur} | {f3(m['mAP50'])} | {f3(m['mAP50_95'])} | {f3(m['F1'])} | "
+                  + " | ".join(f3(k.get(n, {}).get("AP50")) for n in ("tangga", "tepian", "orang", "pilar"))
+                  + f" | {rd['ditemukan']}/{rd['gt']} ({f3(rd['recall'])}) | {c['total']['tp']}/{c['total']['fp']}/{c['total']['fn']} | {m['n_prediksi']} |")
+
+    def dari_lama(r):  # akurasi.json menyimpan metrik + conf025 digabung
+        return dict(metrik={k: v for k, v in r.items() if k != "conf025"}, conf025=r["conf025"])
+
+    lama640 = dari_lama(lama["box_onnx"]["640_fp32"])
+    baris("640", "lama", "ONNX fp32 (rujukan)", lama640)
+    for sz in ukuran:
+        baris(sz, "lama", "ONNX fp32", dari_lama(lama["box_onnx"][f"{sz}_fp32"]))
+        baris(sz, "lama", "ONNX fp16", dari_lama(lama["box_onnx"][f"{sz}_fp16"]))
+        baris(sz, "**latih ulang**", ".pt (pembanding)", pt["box_pt"][sz])
+        baris(sz, "**latih ulang**", "ONNX fp32", ox["box_onnx"][f"{sz}_fp32"])
+        baris(sz, "**latih ulang**", "ONNX fp16 (resmi)", ox["box_onnx"][f"{sz}_fp16"])
+    md += ["", "Rujukan: box .pt lama pada 640 mAP50 0.471; C2 (ensemble laptop, 4 model 960/1280) 0.613, tidak jalan di HP.", "",
+           "### AP50 per kelas, box (ONNX fp16)", ""]
+    kol = []
+    for sz in ukuran:
+        kol += [(f"lama {sz}", dari_lama(lama["box_onnx"][f"{sz}_fp16"])), (f"ulang {sz}", ox["box_onnx"][f"{sz}_fp16"])]
+    kelas = list(lama640["metrik"]["kelas"])
+    md += ["| kelas | n | lama 640 fp32 | " + " | ".join(k for k, _ in kol) + " |", "|---|---|---|" + "---|" * len(kol)]
+    for k in kelas:
+        n = lama640["metrik"]["kelas"][k]["n"]
+        md.append(f"| {'**' + k + '**' if k in PENTING + ('pilar',) else k}{' *' if n < eb.LOW_N else ''} | {n} | "
+                  f"{f3(lama640['metrik']['kelas'][k].get('AP50'))} | "
+                  + " | ".join(f3(r["metrik"]["kelas"].get(k, {}).get("AP50")) for _, r in kol) + " |")
+    md += ["", "\\* n < 20 instance di val: angka kelas ini goyah (tangga hanya 5 instance box).", "",
+           "## Seg (Ultralytics val, mask)", "",
+           "| imgsz | model | box mAP50 | mask mAP50 | mask mAP50-95 | mask P | mask R | mask mAP50 jalur_jalan | jalan_kendaraan | tangga |",
+           "|---|---|---|---|---|---|---|---|---|---|"]
+
+    def baris_seg(sz, model, u):
+        mk = {c["nama"]: c for c in u["mask"]["kelas"]}
+        md.append(f"| {sz} | {model} | {f3(u['box']['mAP50'])} | {f3(u['mask']['mAP50'])} | {f3(u['mask']['mAP50_95'])} | {f3(u['mask']['P'])} | "
+                  f"{f3(u['mask']['R'])} | " + " | ".join(f3(mk.get(n, {}).get("mAP50")) for n in ("jalur_jalan", "jalan_kendaraan", "tangga")) + " |")
+
+    baris_seg("640", "lama (rujukan)", lama["seg_ultra"]["640"])
+    for sz in ukuran:
+        baris_seg(sz, "lama", lama["seg_ultra"][sz])
+        baris_seg(sz, "**latih ulang**", pt["seg_ultra"][sz])
+    md += ["", "## Aturan 1 dan 2 (aturan 3, kecepatan bertahan 5 menit, menunggu tes HP)", "",
+           "| imgsz | aturan 1: box ONNX fp16 mAP50 >= 0.42 | aturan 2: seg mask mAP50 >= 0.55 | lolos 1 dan 2 |", "|---|---|---|---|"]
+    for sz in ukuran:
+        b = ox["box_onnx"][f"{sz}_fp16"]["metrik"]["mAP50"]
+        b32 = ox["box_onnx"][f"{sz}_fp32"]["metrik"]["mAP50"]
+        s_ = pt["seg_ultra"][sz]["mask"]["mAP50"]
+        a1, a2 = b >= ATURAN["box_mAP50"], s_ >= ATURAN["seg_mask_mAP50"]
+        hasil["per_ukuran"][sz] = dict(box_onnx_fp16_mAP50=b, box_onnx_fp32_mAP50=b32, aturan1=a1, seg_mask_mAP50=s_, aturan2=a2,
+                                       lolos_1_2=bool(a1 and a2))
+        md.append(f"| {sz} | {b:.3f} {'LOLOS' if a1 else 'GAGAL'} (fp32 {b32:.3f}) | {s_:.3f} {'LOLOS' if a2 else 'GAGAL'} | "
+                  f"{'YA' if a1 and a2 else 'TIDAK'} |")
+    md += ["", "## Cek jumlah deteksi (conf >= 0.25, 3 frame val pertama, gambar letterbox yang sama)", "",
+           "| model | gambar | .pt | ONNX fp32 | ONNX fp16 | sama? |", "|---|---|---|---|---|---|"]
+    for key, rows in ox["cek_jumlah"].items():
+        for r in rows:
+            sama = len(r["pt"]) == len(r.get("fp32", [])) and ("fp16" not in r or len(r["fp16"]) == len(r["fp32"]))
+            md.append(f"| {key} | {r['gambar'][:30]} | {len(r['pt'])} | {len(r['fp32']) if 'fp32' in r else '-'} | "
+                      f"{len(r['fp16']) if 'fp16' in r else '-'} | {'ya' if sama else 'BEDA'} |")
+    md += ["", "Catatan: jalur ONNX memakai cv2.resize INTER_LINEAR; browser (drawImage) bisa sedikit beda interpolasinya. "
+           "Val v2 hanya 54 frame; tangga 5 instance box dan 11 instance mask."]
+    hasil["box_pt"] = {k: v["metrik"] | dict(conf025=v["conf025"]) for k, v in pt["box_pt"].items()}
+    hasil["box_onnx"] = {k: v["metrik"] | dict(conf025=v["conf025"], cpu_ms_median=v["cpu_ms_median"]) for k, v in ox["box_onnx"].items()}
+    hasil["seg_ultra"] = {k: dict(box=v["box"], mask=v["mask"]) for k, v in pt["seg_ultra"].items()}
+    hasil["cek_jumlah"] = ox["cek_jumlah"]
+    tulis(OUT5B / "akurasi.json", hasil)
+    (OUT5B / "akurasi.md").write_text("\n".join(md) + "\n", encoding="utf-8")
+    print("tersimpan:", OUT5B / "akurasi.md")
 
 
 # ---------------------------------------------------------------- laporan
@@ -280,6 +438,7 @@ def bagian_laporan():
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--bagian", choices=["pt", "onnx", "laporan"], required=True)
+    ap.add_argument("--bagian", choices=["pt", "onnx", "laporan", "hp-pt", "hp-onnx", "hp-laporan"], required=True)
     b = ap.parse_args().bagian
-    {"pt": bagian_pt, "onnx": bagian_onnx, "laporan": bagian_laporan}[b]()
+    {"pt": bagian_pt, "onnx": bagian_onnx, "laporan": bagian_laporan,
+     "hp-pt": hp_pt, "hp-onnx": hp_onnx, "hp-laporan": hp_laporan}[b]()

@@ -23,6 +23,29 @@ MODELS = [("box", "r2-kotak-v3_best.pt"), ("seg", "r2-seg-v3_best.pt")]
 SIZES = (640, 416, 320)
 
 
+def ekspor_hp(a):
+    """Pengaturan ekspor sama dengan 5a: opset default, dynamic=False, simplify=True, quantize=16 untuk fp16."""
+    src = ROOT / "models" / "hp"
+    suffix = "_fp16" if a.fp16 else ""
+    with tempfile.TemporaryDirectory() as tmp:
+        for short, kind in (("box", "kotak"), ("seg", "seg")):
+            for sz in (320, 416):
+                pt_src = src / f"hp-{kind}-v3-{sz}_best.pt"
+                dst = a.out / f"hp_{short}_{sz}{suffix}.onnx"
+                if dst.exists():
+                    print("sudah ada, lewati:", dst)
+                    continue
+                if not pt_src.exists():
+                    print("bobot belum ada, lewati:", pt_src)
+                    continue
+                pt = Path(tmp) / pt_src.name
+                shutil.copy(pt_src, pt)
+                kw = dict(quantize=16) if a.fp16 else dict(half=False)
+                p = YOLO(str(pt)).export(format="onnx", imgsz=sz, dynamic=False, simplify=True, device="cpu", **kw)
+                shutil.move(p, dst)
+                print("tersimpan:", dst, f"{dst.stat().st_size / 1e6:.2f} MB")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, default=ROOT / "models" / "onnx")
@@ -31,8 +54,13 @@ def main():
                     help="Tahap 5a: ekspor fp16 (quantize=16, pengganti half=True) ke {box,seg}_{320,416}_fp16.onnx. "
                          "Di CPU Ultralytics mengonversi lewat onnxruntime float16 (keep_io_types: input/output tetap float32). "
                          "File yang sudah ada TIDAK pernah ditimpa di mode ini.")
+    ap.add_argument("--hp", action="store_true",
+                    help="Tahap 5b: ekspor bobot latih ulang models/hp/hp-{kotak,seg}-v3-{320,416}_best.pt ke "
+                         "models/onnx/hp_{box,seg}_{320,416}[_fp16].onnx (fp32, atau fp16 bersama --fp16). Tidak pernah menimpa.")
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
+    if a.hp:
+        return ekspor_hp(a)
     sizes = (416, 320) if a.fp16 else SIZES
     suffix = "_fp16" if a.fp16 else ""
 
