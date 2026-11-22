@@ -12,6 +12,7 @@ Hanya stdlib. Jalankan dari root repo:
 import mimetypes
 import socket
 import ssl
+import subprocess
 import sys
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -66,22 +67,42 @@ class Handler(SimpleHTTPRequestHandler):
             super().log_message(fmt, *args)
 
 
+PS_ALAMAT = (
+    "$a = @(Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | Select-Object -ExpandProperty ifIndex); "
+    "Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $a -contains $_.InterfaceIndex } | "
+    "ForEach-Object { $_.InterfaceAlias + '|' + $_.IPAddress }"
+)
+
+
 def lan_ips():
-    ips = []
-    try:  # alamat interface rute default (biasanya Wi-Fi hotspot); tidak ada paket dikirim
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("192.0.2.1", 9))
-        ips.append(s.getsockname()[0])
-        s.close()
-    except OSError:
+    """[(nama adapter, IPv4)] dari semua adapter aktif (tanpa 127.x / 169.254.x)."""
+    hasil = []
+    try:  # Windows: sama dengan data/https/jalankan-https.ps1
+        out = subprocess.run(["powershell", "-NoProfile", "-Command", PS_ALAMAT],
+                             capture_output=True, text=True, timeout=15).stdout
+        for baris in out.splitlines():
+            if "|" in baris:
+                nama, ip = baris.strip().rsplit("|", 1)
+                hasil.append((nama, ip))
+    except (OSError, subprocess.SubprocessError):
         pass
-    try:
-        for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
-            if ip not in ips:
-                ips.append(ip)
-    except OSError:
-        pass
-    return [ip for ip in ips if not ip.startswith(("169.254.", "127."))]
+    if not hasil:  # cadangan (bukan Windows / PowerShell gagal): rute default + nama host
+        ips = []
+        try:  # alamat interface rute default; tidak ada paket dikirim
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("192.0.2.1", 9))
+            ips.append(s.getsockname()[0])
+            s.close()
+        except OSError:
+            pass
+        try:
+            for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
+                if ip not in ips:
+                    ips.append(ip)
+        except OSError:
+            pass
+        hasil = [("?", ip) for ip in ips]
+    return [(n, ip) for n, ip in hasil if not ip.startswith(("169.254.", "127."))]
 
 
 def main():
@@ -97,10 +118,13 @@ def main():
     ips = lan_ips()
     print()
     if ips:
-        print(f"IPv4 saat ini       : {', '.join(ips)}")
-        print(f"URL untuk HP        : https://{ips[0]}:{PORT}/")
+        print("Alamat laptop saat ini (adapter aktif):")
+        for nama, ip in ips:
+            label = "   <-- kalau HP nyambung ke hotspot laptop" if ip.startswith("192.168.137.") else ""
+            print(f"  {nama:<28} https://{ip}:{PORT}/{label}")
+        print("Pilih URL sesuai cara HP tersambung.")
     else:
-        print("Tidak ada IPv4 LAN. Sambungkan laptop ke hotspot HP dulu.")
+        print("Tidak ada IPv4 di adapter aktif. Sambungkan laptop ke Wi-Fi/hotspot, atau nyalakan Hotspot Seluler di laptop.")
     print(f"URL di laptop       : https://localhost:{PORT}/")
     print("(Chrome akan memberi peringatan sertifikat self-signed; lanjutkan saja.)")
     print("Tekan Ctrl+C untuk berhenti.\n", flush=True)
