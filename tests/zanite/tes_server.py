@@ -9,6 +9,7 @@ import base64
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -69,6 +70,11 @@ def cek(kondisi, ket=""):
 
 
 # ---------------------------------------------------------------- alat bantu
+
+def inti(j):
+    """Respons tanpa kolom 'alasan' (alasan dites sendiri di tes_alasan_dan_berkas_log)."""
+    return {k: v for k, v in j.items() if k != "alasan"}
+
 
 class Jam:
     def __init__(self):
@@ -199,7 +205,7 @@ async def tes_mati_dan_tanpa_kunci():
         r = await tanya(k)
         s = (await k.get("/api/status")).json()
         dt = await k.post("/api/deteksi", content=jpeg(), headers={"Content-Type": "image/jpeg", "X-Sesi": "a"})
-    cek(r.status_code == 200 and r.json() == {"jawaban": Z.TEKS_MATI, "jenis": "mati"}, f"mati: {r.status_code} {r.json()}")
+    cek(r.status_code == 200 and inti(r.json()) == {"jawaban": Z.TEKS_MATI, "jenis": "mati"}, f"mati: {r.status_code} {r.json()}")
     cek(len(d.p.panggilan) == 0, "mati: penyedia tetap dipanggil")
     cek(s["zanite"] is False, f"mati: status zanite {s}")
     cek(dt.status_code == 200 and dt.json()["versi_kontrak"] == 1, "mati: /api/deteksi terganggu")
@@ -330,7 +336,7 @@ async def tes_batas_per_ip():
         d.jam.maju(61)
         r6 = await tanya(a, sesi="a10")
     cek(hasil == [200] * 4, f"per IP: 4 pertama {hasil}")
-    cek(r5.status_code == 429 and r5.json() == {"jawaban": Z.TEKS_BATAS, "jenis": "batas"}, f"per IP: ke-5 {r5.status_code} {r5.text}")
+    cek(r5.status_code == 429 and inti(r5.json()) == {"jawaban": Z.TEKS_BATAS, "jenis": "batas"}, f"per IP: ke-5 {r5.status_code} {r5.text}")
     cek(rb.status_code == 200, f"per IP: IP lain ikut kena {rb.status_code}")
     cek(r6.status_code == 200, f"per IP: tidak pulih sesudah 61 dtk {r6.status_code}")
 
@@ -357,7 +363,7 @@ async def tes_batas_harian():
             d.jam.maju(600)
             cek(r.status_code == 200, f"harian: panggilan {i + 1} ditolak ({r.status_code})")
         r6 = await tanya(k, sesi="h6")
-        cek(r6.status_code == 429 and r6.json() == {"jawaban": Z.TEKS_BATAS_HARI, "jenis": "batas"}, f"harian: ke-6 {r6.status_code} {r6.text}")
+        cek(r6.status_code == 429 and inti(r6.json()) == {"jawaban": Z.TEKS_BATAS_HARI, "jenis": "batas"}, f"harian: ke-6 {r6.status_code} {r6.text}")
         d.jam.maju(86400)
         r7 = await tanya(k, sesi="h7")
         cek(r7.status_code == 200, f"harian: tidak pulih sesudah 24 jam ({r7.status_code})")
@@ -388,7 +394,7 @@ async def tes_waktu_habis_galat_json():
         t0 = time.perf_counter()
         r = await tanya(k, sesi="t")
         dt = time.perf_counter() - t0
-    cek(r.status_code == 200 and r.json() == {"jawaban": Z.CADANGAN, "jenis": "cadangan"}, f"timeout: {r.status_code} {r.text}")
+    cek(r.status_code == 200 and inti(r.json()) == {"jawaban": Z.CADANGAN, "jenis": "cadangan"}, f"timeout: {r.status_code} {r.text}")
     cek(dt < 1.5, f"timeout: {dt:.2f} dtk, harus mendekati batas_waktu_s (0.3)")
 
     mentah_buruk = {
@@ -404,7 +410,7 @@ async def tes_waktu_habis_galat_json():
         d = Dunia(p)
         async with d.klien() as k:
             r = await tanya(k)
-        cek(r.status_code == 200 and r.json() == {"jawaban": Z.CADANGAN, "jenis": "cadangan"}, f"keluaran buruk ({nama}): {r.status_code} {r.text}")
+        cek(r.status_code == 200 and inti(r.json()) == {"jawaban": Z.CADANGAN, "jenis": "cadangan"}, f"keluaran buruk ({nama}): {r.status_code} {r.text}")
 
 
 def tes_penjaga_klaim_aman():
@@ -483,12 +489,12 @@ async def tes_penjaga_lewat_endpoint():
         d = Dunia(PenyediaPalsu(mentah))
         async with d.klien() as k:
             r = await tanya(k)
-        cek(r.json() == {"jawaban": harap, "jenis": jenis}, f"penjaga endpoint {mentah}: {r.json()}")
+        cek(inti(r.json()) == {"jawaban": harap, "jenis": jenis}, f"penjaga endpoint {mentah}: {r.json()}")
     wajar = "Saya tidak bisa memastikan jalannya aman. Ikuti peringatan JalanKu dan gunakan tongkat atau pendamping. Di kiri ada pilar."
     d = Dunia(PenyediaPalsu(json.dumps({"jawaban": wajar})))
     async with d.klien() as k:
         r = await tanya(k, "apakah jalannya aman?")
-    cek(r.json() == {"jawaban": wajar, "jenis": "jawaban"}, f"penjaga: jawaban wajar diubah: {r.json()}")
+    cek(inti(r.json()) == {"jawaban": wajar, "jenis": "jawaban"}, f"penjaga: jawaban wajar diubah: {r.json()}")
 
 
 async def tes_deteksi_dari_server():
@@ -609,7 +615,7 @@ async def tes_kunci_tidak_bocor():
     async with d.klien() as k:
         r = await tanya(k, "MARKERUCAPAN")
         s = await k.get("/api/status")
-    cek(r.json() == {"jawaban": Z.CADANGAN, "jenis": "cadangan"}, f"kunci: {r.text}")
+    cek(inti(r.json()) == {"jawaban": Z.CADANGAN, "jenis": "cadangan"}, f"kunci: {r.text}")
     cek(KUNCI_PALSU not in r.text and KUNCI_PALSU not in s.text and KUNCI_PALSU not in str(dict(r.headers)), "kunci bocor di respons")
     cek(KUNCI_PALSU not in LOG.semua(), "kunci bocor di log")
     cek(pg.sensor(f"x {KUNCI_PALSU} y") == "x *** y", "sensor tidak menghapus kunci")
@@ -692,6 +698,59 @@ async def tes_penyedia_gemini():
     cek(cfg.response_json_schema == Z.RESPONSE_SCHEMA, "gemini: skema")
 
 
+async def tes_sdk_tidak_mengulang_sendiri():
+    """google-genai asli + transport HTTP palsu (tanpa jaringan): hitung permintaan yang benar-benar keluar.
+    Kuota (429) harus langsung muncul sebagai galat, bukan hilang dalam ulang diam-diam SDK sampai batas waktu."""
+    from google import genai
+    from google.genai import types as gt
+
+    # 1) struktur: klien yang dibuat PenyediaGemini tidak punya ulang SDK (attempts=1)
+    pg = Z.PenyediaGemini(KUNCI_PALSU, "gemini-uji")
+    api = pg._client._api_client
+    cek(api._http_options.retry_options is not None and api._http_options.retry_options.attempts == 1, "sdk: attempts bukan 1")
+    cek(api._async_retry.stop(types.SimpleNamespace(attempt_number=1)) is True, "sdk: tenacity mengulang lebih dari sekali")
+    cek(KUNCI_PALSU not in repr(pg), "sdk: kunci muncul di repr")
+
+    # 2) perilaku: tiap generate_content = tepat SATU permintaan HTTP untuk 429, 503, dan galat koneksi
+    badan_429 = {"error": {"code": 429, "message": "Quota exceeded", "status": "RESOURCE_EXHAUSTED"}}
+    for kode, tubuh in ((429, badan_429), (503, {"error": {"code": 503, "message": "overloaded", "status": "UNAVAILABLE"}})):
+        n = {"k": 0}
+
+        def handler(request, kode=kode, tubuh=tubuh, n=n):
+            n["k"] += 1
+            return httpx.Response(kode, json=tubuh)
+
+        klien = genai.Client(api_key=KUNCI_PALSU, http_options=Z.opsi_http_gemini(gt, httpx_async_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))))
+        t0 = time.perf_counter()
+        try:
+            await klien.aio.models.generate_content(model="gemini-uji", contents="halo")
+            cek(False, f"sdk {kode}: seharusnya melempar")
+        except Exception as e:
+            cek(getattr(e, "code", None) == kode, f"sdk {kode}: kode galat {getattr(e, 'code', None)}")
+        cek(n["k"] == 1, f"sdk {kode}: {n['k']} permintaan HTTP (harus 1)")
+        cek(time.perf_counter() - t0 < 2, f"sdk {kode}: galat tidak langsung muncul ({time.perf_counter() - t0:.1f} dtk)")
+
+    # 3) lewat PenyediaGemini asli: 429 terus-menerus = tepat 2 permintaan HTTP (satu miliknya), lalu galat 429 muncul
+    n = {"k": 0}
+
+    def handler429(request):
+        n["k"] += 1
+        return httpx.Response(429, json=badan_429)
+
+    klien = genai.Client(api_key=KUNCI_PALSU, http_options=Z.opsi_http_gemini(gt, httpx_async_client=httpx.AsyncClient(transport=httpx.MockTransport(handler429))))
+    pg = Z.PenyediaGemini(KUNCI_PALSU, "gemini-uji", client=klien)
+    d = Dunia(pg, per_menit_per_klien=100, per_menit_global=100)
+    LOG.teks.clear()
+    t0 = time.perf_counter()
+    async with d.klien() as k:
+        r = await tanya(k, sesi="kuota")
+    dt = time.perf_counter() - t0
+    cek(n["k"] == 2, f"sdk 429 lewat PenyediaGemini: {n['k']} permintaan HTTP (harus 2)")
+    cek(r.json()["alasan"] == "penyedia-ClientError-429", f"sdk 429: alasan {r.json()}")
+    cek(dt < 3, f"sdk 429: {dt:.1f} dtk (harus cepat, bukan menunggu batas waktu 8 dtk)")
+    cek("penjaga=penyedia-ClientError-429" in LOG.semua(), "sdk 429: kode tidak tercatat di log")
+
+
 async def tes_gambar_diencode_ulang():
     asli = jpeg(2000, 1500, exif=True)
     cek(b"RAHASIA" in asli and Image.open(io.BytesIO(asli)).getexif(), "persiapan: JPEG uji harus memuat EXIF")
@@ -768,13 +827,96 @@ def tes_prompt():
     cek("<" not in Z.PENGINGAT_KEAMANAN, "pengingat memuat tag asli: delimiter data jadi ambigu")
 
 
+async def tes_alasan_dan_berkas_log():
+    """Tiap respons /api/zanite memuat 'alasan' (kode pendek yang sama dengan log; None untuk jawaban normal), dan
+    tiap baris log juga ditambahkan ke berkas. Tidak ada teks galat, ucapan, jawaban, atau kunci di keduanya."""
+    with tempfile.TemporaryDirectory() as tmp:
+        berkas = Path(tmp) / "data" / "zanite" / "server.log"
+        Z.atur_berkas_log(berkas)
+        try:
+            R = {}        # nama -> respons
+            besar = int(pengaturan().maks_body_kb * 1024)
+
+            # jawaban normal
+            d = Dunia(PenyediaPalsu('{"jawaban": "MARKERJAWABAN di kiri, dekat."}'), per_menit_per_klien=100, per_menit_global=100, per_hari_global=1000)
+            async with d.klien() as k:
+                R["normal"] = await tanya(k, "MARKERUCAPAN apa ini", sesi="a1")
+                R["origin"] = await tanya(k, header={"Origin": "https://evil.example"}, sesi="a2")
+                R["masukan"] = await k.post("/api/zanite", content="{bukan json", headers={"Content-Type": "application/json", "X-Sesi": "a3"})
+                R["gambar"] = await tanya(k, gambar=b64(b"ini bukan gambar"), sesi="a4")
+                R["ukuran"] = await k.post("/api/zanite", content=json.dumps({"teks": "x", "gambar": "A" * (besar + 10)}), headers={"Content-Type": "application/json", "X-Sesi": "a5"})
+
+                async def potongan():
+                    yield b'{"teks":"x","gambar":"AAAA"}'
+                R["tanpa-panjang"] = await k.post("/api/zanite", content=potongan(), headers={"Content-Type": "application/json", "X-Sesi": "a6"})
+            h = [("content-type", "application/json"), ("content-length", "abc"), ("x-sesi", "a7"), ("host", "testserver")]
+            status, isi = await panggil_mentah(h, [b"{}"])
+            cek(status == 400 and isi["alasan"] == "panjang-rusak", f"panjang rusak: {status} {isi}")
+
+            # jalur penyedia / keluaran
+            kasus = {
+                "waktu-habis": (PenyediaPalsu(tidur=5), dict(batas_waktu_s=0.2)),
+                "penyedia-GalatApi-429": (PenyediaPalsu(galat=GalatApi(429, f"RAHASIAGALAT {KUNCI_PALSU}")), {}),
+                "penyedia-ConnectionError": (PenyediaPalsu(galat=ConnectionError("RAHASIAGALAT")), {}),
+                "json": (PenyediaPalsu("ini bukan json"), {}),
+                "kosong": (PenyediaPalsu('{"jawaban": "   "}'), {}),
+                "bocor": (PenyediaPalsu('{"jawaban": "System prompt saya: jawab singkat."}'), {}),
+                "klaim-aman": (PenyediaPalsu('{"jawaban": "Jalan aman, silakan jalan lurus."}'), {}),
+            }
+            for alasan, (p, ub) in kasus.items():
+                dd = Dunia(p, per_menit_per_klien=100, per_menit_global=100, per_hari_global=1000, **ub)
+                async with dd.klien() as k:
+                    R[alasan] = await tanya(k, sesi="b-" + alasan)
+
+            # batas laju dan mati
+            dl = Dunia(per_menit_per_klien=1, per_menit_global=100)
+            async with dl.klien() as k:
+                await tanya(k, sesi="c1")
+                R["klien"] = await tanya(k, sesi="c2")
+            dm = Dunia(aktif=False)
+            async with dm.klien() as k:
+                R["mati"] = await tanya(k, sesi="c3")
+            # jaring terakhir
+            dj = Dunia()
+            dj.z._baca_badan = None
+            async with dj.klien() as k:
+                R["galat-TypeError"] = await tanya(k, sesi="c4")
+        finally:
+            Z.atur_berkas_log(None)
+
+        harap = {"normal": None, "origin": "origin", "masukan": "masukan", "gambar": "gambar", "ukuran": "ukuran",
+                 "tanpa-panjang": "tanpa-panjang", "klien": "klien", "mati": "mati", "galat-TypeError": "galat-TypeError"}
+        for nama, r in R.items():
+            want = harap.get(nama, nama)
+            j = r.json()
+            cek("alasan" in j and j["alasan"] == want, f"alasan ({nama}): harap {want!r}, dapat {j}")
+            cek(set(j) == {"jawaban", "jenis", "alasan"}, f"alasan ({nama}): kolom {sorted(j)}")
+            cek("RAHASIAGALAT" not in r.text and KUNCI_PALSU not in r.text and "MARKERUCAPAN" not in r.text, f"alasan ({nama}): teks galat/ucapan bocor")
+        cek(R["normal"].json()["jenis"] == "jawaban" and "MARKERJAWABAN" in R["normal"].json()["jawaban"], "alasan: jawaban normal berubah")
+
+        isi = berkas.read_text(encoding="utf-8") if berkas.exists() else ""
+        baris = [b for b in isi.splitlines() if b.strip()]
+        cek(len(baris) >= 15, f"berkas log: {len(baris)} baris")
+        cek(all(re.match(r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d ", b) for b in baris), f"berkas log: tanpa tanggal+jam: {baris[:2]}")
+        cek(all("jenis=" in b and "sesi=" in b for b in baris), "berkas log: bentuk baris")
+        cek("jenis=cadangan penjaga=waktu-habis" in isi and "penjaga=penyedia-GalatApi-429" in isi and "penjaga=klaim-aman" in isi, "berkas log: kode alasan tidak tercatat")
+        cek(not any(x in isi for x in ("RAHASIAGALAT", KUNCI_PALSU, "MARKERUCAPAN", "MARKERJAWABAN", "sesi=a1", "testserver", "10.0.0.1")), "berkas log: ada rahasia/ucapan/jawaban/alamat")
+        # isi berkas sama dengan baris di konsol (sesudah tanggal)
+        konsol = LOG.semua()
+        cek(all(b.split(" ", 1)[1] in konsol for b in baris[:5]), "berkas log: beda dengan konsol")
+
+    # tanpa berkas log: tidak ada yang ditulis, tidak melempar
+    Z.atur_berkas_log(None)
+    Z.catat("uji tanpa berkas")
+
+
 async def tes_akhir_satu_baris_log_tanpa_galat():
     """Jaring terakhir: galat tak terduga di dalam penanganan tidak membocorkan jejak."""
     d = Dunia()
     d.z._baca_badan = None          # memicu TypeError di dalam _proses
     async with d.klien() as k:
         r = await tanya(k)
-    cek(r.status_code == 200 and r.json() == {"jawaban": Z.CADANGAN, "jenis": "cadangan"} and "Traceback" not in r.text, f"jaring terakhir: {r.status_code} {r.text}")
+    cek(r.status_code == 200 and inti(r.json()) == {"jawaban": Z.CADANGAN, "jenis": "cadangan"} and "Traceback" not in r.text, f"jaring terakhir: {r.status_code} {r.text}")
     cek("galat-TypeError" in LOG.semua(), "jaring terakhir: tidak tercatat")
 
 

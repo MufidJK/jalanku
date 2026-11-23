@@ -278,6 +278,14 @@ class Penyedia(abc.ABC):
         """Kirim foto + isi teks, kembalikan teks mentah (JSON {"jawaban": ...})."""
 
 
+def opsi_http_gemini(types, **tambahan):
+    """Opsi HTTP klien Gemini: SDK TIDAK boleh mengulang sendiri (attempts=1). Satu-satunya ulang adalah milik
+    PenyediaGemini.jawab (satu kali untuk 429/503), supaya galat kuota langsung muncul sebagai
+    penyedia-...-429, bukan hilang dalam jeda ulang SDK sampai batas waktu habis. Di google-genai 3.6.1 tanpa
+    retry_options pun SDK tidak mengulang; ditetapkan eksplisit supaya tidak bergantung pada bawaan versi."""
+    return types.HttpOptions(retry_options=types.HttpRetryOptions(attempts=1), **tambahan)
+
+
 class PenyediaGemini(Penyedia):
     """Gemini lewat google-genai. Kunci hanya disimpan di sini."""
 
@@ -287,7 +295,7 @@ class PenyediaGemini(Penyedia):
         self._types = types
         self._kunci = kunci
         self.model = model
-        self._client = client or genai.Client(api_key=kunci)
+        self._client = client or genai.Client(api_key=kunci, http_options=opsi_http_gemini(types))
         self._level = "MINIMAL"          # turun ke LOW bila model menolak MINIMAL (seperti di spike)
 
     def __repr__(self):
@@ -424,9 +432,34 @@ class Pengaturan:
         self.umur_deteksi_maks_ms = _angka(b.get("umur_deteksi_maks_ms"), 2000, minimal=0)
 
 
+_BERKAS_LOG = None
+
+
+def atur_berkas_log(jalur):
+    """Berkas log Zanite (ditambah per baris, data/ tidak ikut git). None = tanpa berkas. Tidak melempar."""
+    global _BERKAS_LOG
+    if jalur is None:
+        _BERKAS_LOG = None
+        return
+    try:
+        p = Path(jalur)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        _BERKAS_LOG = p
+    except OSError:
+        _BERKAS_LOG = None
+
+
 def catat(pesan):
-    """Satu-satunya jalan cetak log Zanite (dibuat satu pintu supaya mudah diperiksa dan diuji)."""
+    """Satu-satunya jalan cetak log Zanite (dibuat satu pintu supaya mudah diperiksa dan diuji).
+    Isi yang sama ditambahkan ke berkas log dengan tanggal (+ jam bila barisnya belum memuat jam)."""
     print(f"[JalanKu] Zanite {pesan}", flush=True)
+    if _BERKAS_LOG is not None:
+        awal = time.strftime("%Y-%m-%d") if re.match(r"\d\d:\d\d:\d\d ", pesan) else time.strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            with open(_BERKAS_LOG, "a", encoding="utf-8") as f:
+                f.write(f"{awal} {pesan}\n")
+        except OSError:
+            pass
 
 
 class Zanite:
@@ -475,8 +508,10 @@ class Zanite:
     # ---- endpoint
 
     @staticmethod
-    def _balas(status, jawaban, jenis):
-        return JSONResponse(status_code=status, content={"jawaban": jawaban, "jenis": jenis})
+    def _balas(status, jawaban, jenis, alasan=None):
+        """alasan: kode pendek yang sama dengan yang dicatat di log (None untuk jawaban normal). Tidak pernah
+        memuat teks galat, ucapan, atau jawaban."""
+        return JSONResponse(status_code=status, content={"jawaban": jawaban, "jenis": jenis, "alasan": alasan})
 
     def _log(self, sesi, t0, jenis, penjaga=None):
         ms = round((time.perf_counter() - t0) * 1000)
@@ -513,39 +548,41 @@ class Zanite:
 
         # 1. Mati
         if not self.siap:
-            return self._balas(200, TEKS_MATI, "mati")
+            return self._balas(200, TEKS_MATI, "mati", "mati")
 
         # 2. Origin (CSRF)
         if not self._origin_sah(request):
             self._log(sesi, t0, "cadangan", "origin")
-            return self._balas(403, TEKS_DITOLAK, "cadangan")
+            return self._balas(403, TEKS_DITOLAK, "cadangan", "origin")
 
         # 3. Ukuran: Content-Length harus ada dan wajar (isi badan dibatasi lagi saat dibaca)
         maks_byte = int(cfg.maks_body_kb * 1024)
         panjang = request.headers.get("content-length")
         if panjang is None:
             self._log(sesi, t0, "cadangan", "tanpa-panjang")
-            return self._balas(413, TEKS_TERLALU_BESAR, "cadangan")
+            return self._balas(413, TEKS_TERLALU_BESAR, "cadangan", "tanpa-panjang")
         try:
             besar = int(panjang)
         except ValueError:
-            return self._balas(400, TEKS_RUSAK, "cadangan")
+            self._log(sesi, t0, "cadangan", "panjang-rusak")
+            return self._balas(400, TEKS_RUSAK, "cadangan", "panjang-rusak")
         if besar < 0 or besar > maks_byte:
             self._log(sesi, t0, "cadangan", "ukuran")
-            return self._balas(413, TEKS_TERLALU_BESAR, "cadangan")
+            return self._balas(413, TEKS_TERLALU_BESAR, "cadangan", "ukuran")
 
         # 4. Batas laju (di dalam handler, bukan middleware: jalur ini benar-benar dijalankan dan diuji)
         ip = request.client.host if request.client else "?"      # tanpa X-Forwarded-For: bisa dipalsukan
         alasan = self.pembatas.coba(ip, sesi)
         if alasan:
             self._log(sesi, t0, "batas", alasan)
-            return self._balas(429, TEKS_BATAS_HARI if alasan == "hari" else TEKS_BATAS, "batas")
+            return self._balas(429, TEKS_BATAS_HARI if alasan == "hari" else TEKS_BATAS, "batas", alasan)
 
         try:
             return await self._proses(request, sesi, maks_byte, t0)
         except Exception as e:            # jaring terakhir: tidak ada stack trace ke klien
-            self._log(sesi, t0, "cadangan", "galat-" + type(e).__name__)
-            return self._balas(200, CADANGAN, "cadangan")
+            galat = "galat-" + type(e).__name__
+            self._log(sesi, t0, "cadangan", galat)
+            return self._balas(200, CADANGAN, "cadangan", galat)
         finally:
             self.pembatas.lepas(sesi)
 
@@ -557,10 +594,10 @@ class Zanite:
             badan = await asyncio.wait_for(self._baca_badan(request, maks_byte), timeout=min(cfg.batas_waktu_s, 3.0))
         except asyncio.TimeoutError:
             self._log(sesi, t0, "cadangan", "baca-lambat")
-            return self._balas(408, TEKS_RUSAK, "cadangan")
+            return self._balas(408, TEKS_RUSAK, "cadangan", "baca-lambat")
         if badan is None:
             self._log(sesi, t0, "cadangan", "ukuran")
-            return self._balas(413, TEKS_TERLALU_BESAR, "cadangan")
+            return self._balas(413, TEKS_TERLALU_BESAR, "cadangan", "ukuran")
         try:
             data = json.loads(badan)
             if not isinstance(data, dict) or not isinstance(data.get("teks"), str) or not isinstance(data.get("gambar"), str):
@@ -570,14 +607,14 @@ class Zanite:
                 raise ValueError
         except (ValueError, binascii.Error, UnicodeDecodeError, RecursionError):
             self._log(sesi, t0, "cadangan", "masukan")
-            return self._balas(400, TEKS_RUSAK, "cadangan")
+            return self._balas(400, TEKS_RUSAK, "cadangan", "masukan")
 
         # 6. Encode ulang gambar (buang metadata, kecilkan). CPU: jangan di loop utama.
         try:
             jpeg = await asyncio.to_thread(kecilkan_jpeg, mentah, cfg.sisi_maks_px)
         except GambarTidakSah:
             self._log(sesi, t0, "cadangan", "gambar")
-            return self._balas(400, TEKS_RUSAK, "cadangan")
+            return self._balas(400, TEKS_RUSAK, "cadangan", "gambar")
 
         # 7. Ucapan: dibersihkan; kosong = jelaskan sekitar
         ucapan = bersihkan_ucapan(data["teks"]) or UCAPAN_BAWAAN
@@ -591,10 +628,11 @@ class Zanite:
             mentah_jawaban = await asyncio.wait_for(self.penyedia.jawab(jpeg, isi), timeout=cfg.batas_waktu_s)
         except asyncio.TimeoutError:
             self._log(sesi, t0, "cadangan", "waktu-habis")
-            return self._balas(200, CADANGAN, "cadangan")
+            return self._balas(200, CADANGAN, "cadangan", "waktu-habis")
         except Exception as e:
-            self._log(sesi, t0, "cadangan", self._nama_galat(e))
-            return self._balas(200, CADANGAN, "cadangan")
+            nama = self._nama_galat(e)
+            self._log(sesi, t0, "cadangan", nama)
+            return self._balas(200, CADANGAN, "cadangan", nama)
 
         # 10. Sisi keluaran
         try:
@@ -603,17 +641,17 @@ class Zanite:
                 raise ValueError
         except (ValueError, KeyError, TypeError):
             self._log(sesi, t0, "cadangan", "json")
-            return self._balas(200, CADANGAN, "cadangan")
+            return self._balas(200, CADANGAN, "cadangan", "json")
         jawaban = bersihkan_jawaban(jawaban)
         if jawaban == CADANGAN:             # kosong setelah dibersihkan (mis. hanya emoji)
             self._log(sesi, t0, "cadangan", "kosong")
-            return self._balas(200, CADANGAN, "cadangan")
+            return self._balas(200, CADANGAN, "cadangan", "kosong")
         if bocor_instruksi(jawaban):
             self._log(sesi, t0, "cadangan", "bocor")
-            return self._balas(200, TOLAK_PERMINTAAN, "cadangan")
+            return self._balas(200, TOLAK_PERMINTAAN, "cadangan", "bocor")
         if klaim_aman(jawaban):
             self._log(sesi, t0, "cadangan", "klaim-aman")
-            return self._balas(200, KALIMAT_TIDAK_PASTI, "cadangan")
+            return self._balas(200, KALIMAT_TIDAK_PASTI, "cadangan", "klaim-aman")
         self._log(sesi, t0, "jawaban")
         return self._balas(200, jawaban, "jawaban")
 
@@ -630,6 +668,7 @@ def buat_zanite(config, root):
     """Dipanggil sekali di lifespan. Kunci dibaca dari .env, dipindah ke objek penyedia, lalu dicabut dari
     os.environ. Tidak melempar: kalau apa pun kurang, Zanite mati dan server lain jalan seperti biasa."""
     pengaturan = Pengaturan((config or {}).get("zanite"))
+    atur_berkas_log(Path(root) / "data" / "zanite" / "server.log")
     if not pengaturan.aktif:
         catat("nonaktif (zanite.aktif: false).")
         return Zanite(None, pengaturan)

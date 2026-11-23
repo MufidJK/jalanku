@@ -5,7 +5,8 @@
 //  - ubahJadi(): Chrome menulis "Zanite" sebagai "jadi"; hanya dihitung bila langsung diikuti perintah penuh.
 //  - jenisPerintah(): "jelaskan sekitar" (mengandung sekitar/jelas) atau pertanyaan bebas.
 //  - ambilPerintah(): teks transkrip -> teks perintah tanpa kata bangun (null = hanya kata bangun / kosong).
-//  - buatPelacakBicara(): kapan transkrip harus dibuang karena app sedang bicara (+ 500 ms sesudahnya).
+//  - buatPelacakBicara(): kapan app sedang bicara (+ 500 ms sesudahnya) dan teks ucapan yang baru/sedang berbunyi.
+//  - gemaApp(): apakah transkrip yang datang saat app bicara adalah gema ucapan app sendiri (dibuang) atau suara pengguna.
 //  - buatJendela(): jendela perintah 6 detik dan kapan perintah dianggap selesai diucapkan.
 (function (root) {
   const ZC = typeof module !== "undefined" && module.exports ? require("./zanite-cocok.js") : root.ZaniteCocok;
@@ -63,6 +64,25 @@
     return mentah;
   }
 
+  // ---- penyaring gema. Transkrip yang datang saat app bicara TIDAK dibuang begitu saja (mic HP hampir tidak
+  // mendengar app, jadi yang datang hampir pasti suara pengguna). Dibuang hanya bila mirip teks ucapan app sendiri:
+  //  - >= 60% kata transkrip muncul di teks SATU ucapan app (yang sedang berbunyi atau baru selesai < 1,5 dtk);
+  //  - transkrip 1 kata: dibuang hanya bila kata itu ada di teks ucapan app.
+  const GEMA_PERSEN = 0.6;
+  function gemaApp(transkrip, teksApp) {
+    const kata = token(transkrip);
+    if (!kata.length) return false;
+    for (const t of teksApp || []) {
+      const ada = new Set(token(t));
+      if (!ada.size) continue;
+      if (kata.length === 1) { if (ada.has(kata[0])) return true; continue; }
+      let cocok = 0;
+      for (const k of kata) if (ada.has(k)) cocok += 1;
+      if (cocok / kata.length >= GEMA_PERSEN) return true;
+    }
+    return false;
+  }
+
   // ---- pelacak "app sedang bicara". Mic tidak pernah dimatikan; transkrip yang datang saat app bicara
   // dan tailMs sesudahnya dibuang. Tiap ucapan punya batas pengaman (onend kadang tidak datang di Chrome HP).
   //
@@ -70,12 +90,15 @@
   // (bisa macet true di Chrome Android -> Zanite tuli). Satu ucapan dihitung "bicara" selama tercatat DAN
   // (sintesis speaking/pending ATAU baru mulai < mulaiMs lalu). Bila sintesis sudah tidak speaking/pending
   // selama paksaMs tetapi onend tidak datang, ucapan itu diakhiri paksa ("selesai-paksa").
-  // opsi: mulaiMs (1500), paksaMs (1000), catat(teks) untuk log.
+  // opsi: mulaiMs (1500), paksaMs (1000), gemaMs (1500: teks ucapan yang baru selesai masih dihitung untuk
+  // penyaring gema), catat(teks) untuk log.
   function buatPelacakBicara(jam, tailMs, opsi) {
     const tail = tailMs == null ? 500 : tailMs;
-    const o = Object.assign({ mulaiMs: 1500, paksaMs: 1000, catat: null }, opsi || {});
+    const o = Object.assign({ mulaiMs: 1500, paksaMs: 1000, gemaMs: 1500, catat: null }, opsi || {});
     const aktif = new Map();   // id -> { mati (batas pengaman), tMulai, tAktif (terakhir sintesis terlihat aktif), sintesis }
     let n = 0, akhir = -Infinity, terakhirBicara = -Infinity, paksa = 0, dibatalkan = 0;
+    const baruSelesai = [];    // { teks, t }: ucapan yang baru berakhir (untuk penyaring gema)
+    const catatSelesai = (e, t) => { if (e.teks) baruSelesai.push({ teks: e.teks, t }); };
     const lapor = (t) => { if (o.catat) o.catat(t); };
     // Ucapan yang berakhir tanpa onend/onerror (cancel, selesai-paksa, pengaman): pemilik janji ucapannya diberi tahu
     // saat itu juga supaya tidak menunggu pengaman 15-20 detik.
@@ -85,12 +108,13 @@
     function segarkan(speaking, pending) {
       const t = jam(), sint = !!(speaking || pending);
       for (const [id, e] of aktif) {
-        if (t >= e.mati) { aktif.delete(id); akhir = Math.max(akhir, e.mati); putus(e, "pengaman"); continue; }
+        if (t >= e.mati) { aktif.delete(id); akhir = Math.max(akhir, e.mati); catatSelesai(e, e.mati); putus(e, "pengaman"); continue; }
         if (!e.sintesis) continue;
         if (sint) { e.tAktif = t; continue; }
         if (t - e.tAktif >= o.paksaMs && t - e.tMulai >= o.mulaiMs) {
           aktif.delete(id);
           akhir = Math.max(akhir, e.tAktif);   // ekor dihitung dari akhir sintesis terakhir yang terlihat
+          catatSelesai(e, e.tAktif);
           paksa += 1;
           lapor("selesai-paksa: onend tidak datang, sintesis diam " + Math.round(t - e.tAktif) + " ms");
           putus(e, "paksa");
@@ -102,10 +126,17 @@
       // opsi.tanpaSintesis: bunyi yang bukan speechSynthesis (bip): dihitung sampai selesai() atau batas pengaman
       mulai(batasMs, opsiUcapan) {
         const id = ++n, t = jam();
-        aktif.set(id, { mati: t + batasMs, tMulai: t, tAktif: t, sintesis: !(opsiUcapan && opsiUcapan.tanpaSintesis), saatPutus: opsiUcapan && opsiUcapan.saatPutus });
+        const ou = opsiUcapan || {};
+        aktif.set(id, { mati: t + batasMs, tMulai: t, tAktif: t, sintesis: !ou.tanpaSintesis, saatPutus: ou.saatPutus, teks: ou.teks || "", tingkat: ou.tingkat });
         return id;
       },
-      selesai(id) { if (aktif.delete(id)) akhir = Math.max(akhir, jam()); },
+      selesai(id) {
+        const e = aktif.get(id);
+        if (!e) return;
+        aktif.delete(id);
+        akhir = Math.max(akhir, jam());
+        catatSelesai(e, jam());
+      },
       // synth.cancel() memutus semua ucapan yang ada; onend/onerror-nya belum tentu datang. Ucapan baru
       // sesudahnya (yang di-speak() setelah cancel) mendapat catatannya sendiri.
       selesaiSemua() {
@@ -115,6 +146,7 @@
           aktif.clear();
           akhir = Math.max(akhir, jam());
           dibatalkan += jumlah;
+          for (const e of lama) catatSelesai(e, jam());
           for (const e of lama) putus(e, "cancel");
         }
         return jumlah;
@@ -129,6 +161,16 @@
         return bicara || t < Math.max(akhir, terakhirBicara) + tail;
       },
       jumlah: () => aktif.size,
+      // peringatan tingkat 3 yang masih tercatat berbunyi: tidak boleh dipotong oleh kata bangun
+      adaTingkat3: () => { for (const e of aktif.values()) if (e.tingkat === 3) return true; return false; },
+      // teks ucapan yang sedang berbunyi + yang selesai < gemaMs lalu (bahan penyaring gema)
+      teksBicara() {
+        const t = jam(), out = [];
+        for (const e of aktif.values()) if (e.teks) out.push(e.teks);
+        for (let i = baruSelesai.length - 1; i >= 0; i--) if (t - baruSelesai[i].t >= o.gemaMs) baruSelesai.splice(i, 1);
+        for (const b of baruSelesai) out.push(b.teks);
+        return out;
+      },
       statistik: () => ({ paksa, dibatalkan }),
     };
   }
@@ -192,13 +234,13 @@
     for (const [k, v] of Object.entries(info.header || {})) out.push(k + ": " + nilai(v));
     out.push("", "== HITUNGAN ==");
     for (const [k, v] of Object.entries(info.hitung || {})) out.push(k + ": " + nilai(v));
-    const baris = (info.baris || []).slice(-150);
+    const baris = (info.baris || []).slice(-300);
     out.push("", "== " + baris.length + " BARIS TERAKHIR ==");
     for (const b of baris) out.push(b);
     return out.join("\n");
   }
 
-  const api = { KATA_SOPAN, siapkanKataSopan, ubahJadi, jenisPerintah, ambilPerintah, buatPelacakBicara, buatJendela, susunLaporan };
+  const api = { KATA_SOPAN, siapkanKataSopan, ubahJadi, jenisPerintah, ambilPerintah, buatPelacakBicara, gemaApp, buatJendela, susunLaporan };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ZaniteAturan = api;
 })(typeof window !== "undefined" ? window : globalThis);
