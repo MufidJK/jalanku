@@ -35,6 +35,29 @@ KOTAK, SEG = "data/dataset-gabung-kotak-v3/data.yaml", "data/dataset-gabung-seg-
 RUNS = {
     "hp-kotak-v3-320": dict(model="yolo26n.pt", data=KOTAK, epochs=100, patience=30, imgsz=320, batch=BATCH),
     "hp-kotak-v3-416": dict(model="yolo26n.pt", data=KOTAK, epochs=100, patience=30, imgsz=416, batch=BATCH),
+    # Tahap 5c (data/prompt-distilasi.md): sama dengan hp-kotak-v3-416, data = gabung-kotak-v3 + pseudo-label teacher C2
+    "hp-kotak-v3-416-distil": dict(model="yolo26n.pt", data="data/dataset-distil-kotak-v3/data.yaml", epochs=100, patience=30,
+                                   imgsz=416, batch=BATCH),
+    # Tahap 5c ronde 2: sama, pseudo-label dengan ambang per kelas = conf_kelas aplikasi (data/dataset-distil-kotak-v3-r2)
+    "hp-kotak-v3-416-distil-r2": dict(model="yolo26n.pt", data="data/dataset-distil-kotak-v3-r2/data.yaml", epochs=100, patience=30,
+                                      imgsz=416, batch=BATCH),
+    # Tahap 5c ronde 3 (data/prompt-distilasi.md, putaran 3): self-training dua tahap, seed 0 dan 1. Aturan dikunci sebelum hasil.
+    #   t1: init dari hp-kotak-v3-416_best.pt, latih di dataset r2 (manusia + pseudo per kelas), TEPAT 30 epoch, patience 0 (mati).
+    #   t2: init dari last.pt t1, latih di data manusia saja (gabung-kotak-v3), TEPAT 15 epoch, lr0 0.001, warmup 0, patience 0.
+    #   Yang dievaluasi hanya last.pt tahap 2 (tidak ada pemilihan epoch/best.pt berdasarkan val).
+    #   t2 memakai optimizer AdamW eksplisit: dengan optimizer=auto, Ultralytics mengabaikan lr0 (memilih lr sendiri 0.000833).
+    "hp-kotak-v3-416-distil-r3-s0-t1": dict(model=str(ROOT / "models/hp/hp-kotak-v3-416_best.pt"),
+                                              data="data/dataset-distil-kotak-v3-r2/data.yaml", epochs=30, patience=0, imgsz=416,
+                                              batch=BATCH, seed=0, simpan="last"),
+    "hp-kotak-v3-416-distil-r3-s0-t2": dict(model=str(ROOT / "runs/hp/hp-kotak-v3-416-distil-r3-s0-t1/weights/last.pt"),
+                                              data=KOTAK, epochs=15, patience=0, imgsz=416, batch=BATCH, seed=0, simpan="last",
+                                              extra=dict(optimizer="AdamW", lr0=0.001, momentum=0.9, warmup_epochs=0)),
+    "hp-kotak-v3-416-distil-r3-s1-t1": dict(model=str(ROOT / "models/hp/hp-kotak-v3-416_best.pt"),
+                                              data="data/dataset-distil-kotak-v3-r2/data.yaml", epochs=30, patience=0, imgsz=416,
+                                              batch=BATCH, seed=1, simpan="last"),
+    "hp-kotak-v3-416-distil-r3-s1-t2": dict(model=str(ROOT / "runs/hp/hp-kotak-v3-416-distil-r3-s1-t1/weights/last.pt"),
+                                              data=KOTAK, epochs=15, patience=0, imgsz=416, batch=BATCH, seed=1, simpan="last",
+                                              extra=dict(optimizer="AdamW", lr0=0.001, momentum=0.9, warmup_epochs=0)),
     "hp-seg-v3-320": dict(model="yolo26n-seg.pt", data=SEG, epochs=300, patience=100, imgsz=320, batch=BATCH),
     "hp-seg-v3-416": dict(model="yolo26n-seg.pt", data=SEG, epochs=300, patience=100, imgsz=416, batch=BATCH),
 }
@@ -59,7 +82,8 @@ def tambah_meta_hp(run, rd):
         best_epoch = int(rows[max(range(len(rows)), key=lambda i: fit(rows[i]))]["epoch"])
     except Exception as e:  # tidak fatal
         print("epoch terbaik tidak terbaca:", e)
-    meta["hp"] = dict(imgsz=RUNS[run]["imgsz"], epoch_terbaik=best_epoch, epoch_dijalankan=meta.get("epoch_terakhir"),
+    kunci_be = "epoch_terbaik_val_hanya_informasi" if RUNS[run].get("simpan") == "last" else "epoch_terbaik"  # ronde 3: tidak dipakai memilih
+    meta["hp"] = dict(imgsz=RUNS[run]["imgsz"], **{kunci_be: best_epoch}, epoch_dijalankan=meta.get("epoch_terakhir"),
                       total_detik_latih=meta.get("total_detik_latih"), vram_puncak_gib=meta.get("vram_puncak_gib"),
                       catatan="sama dengan r2-kotak-v3 / r2-seg-v3, hanya imgsz yang beda")
     lb.tulis_meta(mp, meta)
@@ -78,10 +102,11 @@ def satu_run():
     cfg = RUNS[run]
     lb.PROJECT = ROOT / "runs" / "hp"
     lb.SMOKE = lb.PROJECT / "_smoke"
-    lb.FIXED = dict(lb.FIXED, imgsz=cfg["imgsz"], seed=0)
+    lb.FIXED = dict(lb.FIXED, imgsz=cfg["imgsz"], seed=cfg.get("seed", 0), **cfg.get("extra", {}))
     lb.BATCH = cfg["batch"]
     lb.RUNS = {k: {kk: v[kk] for kk in ("model", "data", "epochs", "patience")} for k, v in RUNS.items()}
-    dst = ROOT / "models" / "hp" / f"{run}_best.pt"
+    simpan_last = cfg.get("simpan") == "last"  # ronde 3: bobot yang dipakai = last.pt, tidak pernah best.pt
+    dst = ROOT / "models" / "hp" / (f"{run}_last.pt" if simpan_last else f"{run}_best.pt")
     if not smoke and not ("--resume" in sys.argv) and dst.exists():
         sys.exit(f"{dst} sudah ada, tidak ditimpa.")
     try:
@@ -91,14 +116,15 @@ def satu_run():
             rd = lb.PROJECT / run
             mp = rd / "meta.json"
             best = rd / "weights" / "best.pt"
-            if mp.exists() and json.loads(mp.read_text(encoding="utf-8")).get("status") == "selesai" and best.exists():
+            src = rd / "weights" / ("last.pt" if simpan_last else "best.pt")
+            if mp.exists() and json.loads(mp.read_text(encoding="utf-8")).get("status") == "selesai" and src.exists():
                 be = tambah_meta_hp(run, rd)
                 if dst.exists():
                     print(f"{dst.relative_to(ROOT)} sudah ada, tidak ditimpa")
                 else:
                     dst.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(best, dst)
-                    print(f"best.pt (epoch {be}) disalin ke {dst.relative_to(ROOT)}")
+                    shutil.copy2(src, dst)
+                    print(f"{src.name}" + ("" if simpan_last else f" (epoch {be})") + f" disalin ke {dst.relative_to(ROOT)}")
 
 
 def semua():
