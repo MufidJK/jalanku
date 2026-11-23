@@ -10,6 +10,7 @@
   <link rel="apple-touch-icon" href="ikon/ikon-180.png">
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="zanite.css">
 </head>
 <body>
   <video id="kamera" playsinline muted></video>
@@ -38,6 +39,7 @@
         <div data-z="kanan">KANAN</div>
       </div>
       <div id="info"></div>
+      <div id="zanite-status" aria-hidden="true" hidden></div>
     </div>
 
     <div id="panel" hidden>
@@ -61,6 +63,8 @@
         <span class="judul-atur"><span>Volume</span><span class="nilai"><span id="nilai-volume">100</span>%</span></span>
         <input type="range" id="atur-volume" min="0" max="100" step="10" value="100">
       </label>
+      <button id="salin-log-zanite" type="button" hidden>Salin log Zanite</button>
+      <textarea id="teks-log-zanite" readonly hidden rows="6" aria-label="Log Zanite, pilih lalu salin"></textarea>
     </div>
 
     <button id="tombol-mode-suara" aria-label="Mode suara: layar gelap, peringatan lewat suara dan getar"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><path d="M3.5 9.5h3.5L11.5 5.5v13L7 14.5H3.5z" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 9a4.2 4.2 0 0 1 0 6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M18 6.2a8.2 8.2 0 0 1 0 11.6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Mode suara</button>
@@ -80,6 +84,9 @@
   <script src="mock.js"></script>
   <script src="suara.js"></script>
   <script src="server.js"></script>
+  <script src="zanite-cocok.js"></script>
+  <script src="zanite-aturan.js"></script>
+  <script src="zanite.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

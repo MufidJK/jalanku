@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from deteksi import ROOT, MesinDeteksi, muat_config, sinkron_gpu
 from logika import MesinLogika
+from zanite import buat_zanite
 
 
 WEB_DIR = ROOT / "src" / "web"
@@ -90,6 +91,9 @@ async def lifespan(app: FastAPI):
     app.state.mesin_deteksi = MesinDeteksi(config)
     app.state.mesin_logika = MesinLogika(config)
 
+    # Zanite (asisten suara). Gagal apa pun = Zanite mati, bagian lain jalan seperti biasa.
+    app.state.zanite = buat_zanite(config, ROOT)
+
     siapkan_rekam(app)
 
     app.state.siap = True
@@ -109,12 +113,24 @@ app = FastAPI(
 )
 
 
+def catat_untuk_zanite(app: FastAPI, sesi_id, hasil):
+    """Simpan deteksi terakhir sesi ini untuk Zanite. Tidak boleh membuat /api/deteksi gagal."""
+    try:
+        zanite = getattr(app.state, "zanite", None)
+        if zanite is not None and zanite.siap:
+            zanite.catat_deteksi(sesi_id, hasil)
+    except Exception as error:
+        print(f"[JalanKu] Gagal mencatat deteksi untuk Zanite: {type(error).__name__}")
+
+
 @app.get("/api/status")
 async def status(request: Request):
     return {
         "siap": getattr(request.app.state, "siap", False),
         "model": getattr(request.app.state, "nama_model", "model"),
         "versi_kontrak": 1,
+        # true hanya kalau Zanite aktif di config DAN kuncinya ada. Tidak ada info tentang kuncinya.
+        "zanite": bool(getattr(getattr(request.app.state, "zanite", None), "siap", False)),
     }
 
 
@@ -166,6 +182,7 @@ async def deteksi(
         )
 
         rekam(request.app, data_gambar, sesi_id, hasil_deteksi, hasil)
+        catat_untuk_zanite(request.app, sesi_id, hasil)
 
         return hasil
 
@@ -176,6 +193,20 @@ async def deteksi(
             status_code=500,
             content={"error": "Gagal memproses gambar."},
         )
+
+
+@app.post("/api/zanite")
+async def zanite_jawab(
+    request: Request,
+    x_sesi: str | None = Header(default=None, alias="X-Sesi"),
+):
+    """Semua pemeriksaan dan jawaban (termasuk jalur gagal) ada di zanite.py."""
+    zanite = getattr(request.app.state, "zanite", None)
+    if zanite is None:
+        return JSONResponse(
+            content={"jawaban": "Zanite belum aktif di server.", "jenis": "mati"}
+        )
+    return await zanite.tangani(request, x_sesi)
 
 
 # Halaman web (src/web/). Harus SETELAH semua route /api supaya

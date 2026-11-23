@@ -100,3 +100,18 @@ jauh_butuh_seg: true           # true = objek kotak "jauh" tidak jadi peringatan
 tahan_dekat_ms: 1500             # A: peringatan objek "di depan, dekat" diulang sampai N ms sesudah hilang (0 = mati); tidak memperpanjang diri
 samping_maks_tingkat: 2          # B: objek kiri/kanan paling tinggi tingkat ini (3 = mati) ...
 samping_masuk_tengah_min: 0.15   # ... kecuali kotaknya masuk zona tengah >= bagian lebar gambar ini (tetap tingkat normal)
+
+# --- Zanite (asisten suara, Tahap 6) ---
+# Semua kunci boleh dihapus: server memakai nilai bawaan yang sama dengan di bawah.
+# Kunci API TIDAK di sini: GEMINI_API_KEY ada di .env. aktif: false = Zanite mati, bagian server lain tidak berubah.
+zanite:
+  aktif: true
+  penyedia: gemini
+  model: gemini-3.1-flash-lite
+  batas_waktu_s: 8
+  per_menit_per_klien: 4      # per IP klien
+  per_menit_global: 10        # semua klien (tier gratis pernah 429 setelah sekitar 20 per menit)
+  per_hari_global: 200
+  maks_body_kb: 400
+  sisi_maks_px: 640
+  umur_deteksi_maks_ms: 2000

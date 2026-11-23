@@ -424,6 +424,7 @@ async function mulaiKamera() {
     jumlah = 0;
     jalankanLoop();
     mintaKunciLayar();
+    zaniteHidup(); // dari gestur Mulai / Mode suara: izin mikrofon diminta di sini
     return "jalan";
   } catch (err) {
     setStatus("Kamera gagal: " + err.name, null);
@@ -440,6 +441,7 @@ function berhentiKamera() {
   if (modeSuara) keluarModeSuara(false);
   perbaruiTombolModeSuara();
   hentikanLoop();
+  zaniteMati();
   lepasKunciLayar();
   lepasStream();
   setStatus("Tekan Mulai.", null);
@@ -450,6 +452,15 @@ function berhentiKamera() {
   tombolMulai.classList.remove("jalan");
   layarAwal.hidden = false;
   bersihkanOverlay();
+}
+
+// --- Zanite (zanite.js): hanya jalan selama kamera jalan ---
+function zaniteHidup() {
+  if (window.Zanite) window.Zanite.mulai();
+}
+
+function zaniteMati() {
+  if (window.Zanite) window.Zanite.berhenti();
 }
 
 // --- Wake Lock: layar tidak mati selama jalan ---
@@ -555,6 +566,7 @@ function jedaOtomatis() {
   dijeda = true;
   batalTahan();
   hentikanLoop();
+  zaniteMati();
   lepasStream();
   if ("speechSynthesis" in window) window.speechSynthesis.cancel();
   // aktif dan modeSuara tetap: pengguna kembali ke mode yang sama.
@@ -576,6 +588,7 @@ async function lanjutOtomatis() {
   gambarOverlay(null);
   jalankanLoop(); // juga mereset banner
   mintaKunciLayar();
+  zaniteHidup();
   ucapkanSistem("Lanjut."); // baru sesudah kamera benar-benar diputar
 }
 
