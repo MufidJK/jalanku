@@ -204,7 +204,7 @@ async def zanite_jawab(
     zanite = getattr(request.app.state, "zanite", None)
     if zanite is None:
         return JSONResponse(
-            content={"jawaban": "Zanite belum aktif di server.", "jenis": "mati", "alasan": "mati"}
+            content={"jawaban": "Zanite belum aktif di server.", "jenis": "mati", "alasan": "mati", "model": None}
         )
     return await zanite.tangani(request, x_sesi)
 

@@ -108,7 +108,13 @@ zanite:
   aktif: true
   penyedia: gemini
   model: gemini-3.1-flash-lite
-  batas_waktu_s: 8
+  # Model cadangan dicoba berurutan bila model utama habis waktu, padat (429/503) atau galat server (500/504).
+  # 400 dan hasil penjaga (klaim-aman, bocor) tidak pernah berpindah model.
+  model_cadangan: [gemini-3.5-flash-lite]   # gemini-2.5-flash dikeluarkan: 404 di 12 dari 12 panggilan (data/zanite/hasil_cadangan.md)
+  batas_model_utama_s: 4      # model utama paling lama sekian dtk; sisanya untuk cadangan
+  batas_waktu_s: 9            # anggaran TOTAL semua model (klien HP menunggu 10 dtk)
+  lewati_utama_setelah_gagal: 2   # model utama gagal (waktu habis/429/5xx) sekian kali berturut-turut -> dilewati
+  lama_lewati_utama_s: 300        # selama sekian detik; sesudahnya dicoba lagi, satu keberhasilan mereset hitungan
   per_menit_per_klien: 4      # per IP klien
   per_menit_global: 10        # semua klien (tier gratis pernah 429 setelah sekitar 20 per menit)
   per_hari_global: 200

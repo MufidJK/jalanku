@@ -91,9 +91,9 @@ class Perekam:
         self.asli = asli
         self.mentah = None
 
-    async def jawab(self, jpeg_bytes, isi_teks):
+    async def jawab(self, jpeg_bytes, isi_teks, **kw):
         self.mentah = None
-        hasil = await self.asli.jawab(jpeg_bytes, isi_teks)
+        hasil = await self.asli.jawab(jpeg_bytes, isi_teks, **kw)
         self.mentah = hasil
         return hasil
 
@@ -105,10 +105,13 @@ def jawaban_dari_mentah(mentah):
         return None
 
 
-async def utama():
+async def utama(model_paksa=None):
+    """model_paksa: pakai SATU model ini saja (tanpa model cadangan), supaya hasilnya milik model itu (cek_cadangan.py)."""
     konfig = yaml.safe_load((ROOT / "src" / "server" / "config.yaml").read_text(encoding="utf-8")) or {}
     bagian = dict(konfig.get("zanite") or {})
     bagian.update(per_menit_per_klien=100, per_menit_global=100, per_hari_global=1000)   # hanya untuk skrip ini
+    if model_paksa:
+        bagian.update(model=model_paksa, model_cadangan=[])
     z = zn.buat_zanite({"zanite": bagian}, ROOT)
     if not z.siap:
         sys.exit("Zanite tidak siap (kunci tidak ada di .env, atau zanite.aktif: false). Tidak ada panggilan dilakukan.")
@@ -242,7 +245,7 @@ def putaran_sebelumnya():
     return kepala + [isi, ""] + ([sebelumnya, ""] if sebelumnya else [])
 
 
-def tulis_laporan(z, hasil, r, rincian, med):
+def tulis_laporan(z, hasil, r, rincian, med, dengan_sebelumnya=True):
     p = z.pengaturan
     gagal_penyedia = [h for h in hasil if h["jenis"] == "cadangan" and h["penjaga"] not in PENJAGA_ISI]
     lulus_inti = all(r[i] for i in (1, 2, 3, 5, 6, 7))
@@ -304,7 +307,8 @@ def tulis_laporan(z, hasil, r, rincian, med):
               "- Aturan 6 menghitung penjaga isi (bocor, klaim-aman, kosong) yang menyala di a, b, c; galat penyedia dilaporkan terpisah.",
               "- Aturan 7: kata jarak dihitung bila berupa perkiraan jarak (\"jarak sedang\", \"di kiri, sedang\", \"... jauh.\"), bukan \"dekat dengan pilar\". "
               "Pola kalimat terbuka dan pola jarak ada di skrip; jawaban lengkap di atas tetap perlu dibaca.", ""]
-    baris += putaran_sebelumnya()
+    if dengan_sebelumnya:
+        baris += putaran_sebelumnya()
     return "\n".join(baris)
 
 

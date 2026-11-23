@@ -35,6 +35,12 @@ MAKS_SESI_KUNCI = 64          # panjang kunci sesi yang dipakai (X-Sesi dari kli
 MAKS_SESI_DETEKSI = 50        # jumlah sesi yang disimpan deteksinya; yang terlama dibuang
 MAKS_OBJEK_DETEKSI = 8        # objek per sesi yang masuk ke prompt
 MAKS_PIKSEL = 30_000_000      # tolak gambar dengan piksel lebih dari ini sebelum didecode penuh
+# Galat penyedia yang boleh berpindah ke model cadangan: padat/kuota (429), galat server (500/502/503/504), dan
+# galat tanpa kode HTTP (jaringan putus). 400 (permintaan kita salah), 401/403 (kunci), dan hasil penjaga kita
+# (klaim-aman, bocor) tidak pernah berpindah model.
+KODE_GANTI_MODEL = frozenset({429, 500, 502, 503, 504})
+POLA_NAMA_MODEL = re.compile(r"[A-Za-z0-9._-]{1,60}")
+MAKS_MODEL_CADANGAN = 3
 MAKS_KLIEN_DICATAT = 1000     # batas kamus penghitung per IP
 
 UCAPAN_BAWAAN = "jelaskan sekitar"
@@ -274,8 +280,9 @@ class Penyedia(abc.ABC):
     """Antarmuka penyedia LLM, supaya bisa diganti (mis. OpenRouter) tanpa menyentuh endpoint."""
 
     @abc.abstractmethod
-    async def jawab(self, jpeg_bytes, isi_teks):
-        """Kirim foto + isi teks, kembalikan teks mentah (JSON {"jawaban": ...})."""
+    async def jawab(self, jpeg_bytes, isi_teks, model=None, ulang=True):
+        """Kirim foto + isi teks ke `model` (None = model bawaan penyedia), kembalikan teks mentah
+        (JSON {"jawaban": ...}). ulang: boleh satu kali ulang untuk 429/503 (hanya model terakhir di rantai)."""
 
 
 def opsi_http_gemini(types, **tambahan):
@@ -296,7 +303,7 @@ class PenyediaGemini(Penyedia):
         self._kunci = kunci
         self.model = model
         self._client = client or genai.Client(api_key=kunci, http_options=opsi_http_gemini(types))
-        self._level = "MINIMAL"          # turun ke LOW bila model menolak MINIMAL (seperti di spike)
+        self._level = {}                 # model -> "LOW" bila model itu menolak MINIMAL (seperti di spike)
 
     def __repr__(self):
         return f"PenyediaGemini(model={self.model!r})"
@@ -306,30 +313,41 @@ class PenyediaGemini(Penyedia):
         teks = str(teks)
         return teks.replace(self._kunci, "***") if self._kunci else teks
 
-    def _config(self):
+    @staticmethod
+    def _seri_25(model):
+        """Model Gemini 2.5 memakai thinking_budget; model lain memakai thinking_level."""
+        return str(model).startswith("gemini-2.5")
+
+    def _config(self, model):
         t = self._types
+        if self._seri_25(model):
+            berpikir = t.ThinkingConfig(thinking_budget=0)
+        else:
+            berpikir = t.ThinkingConfig(thinking_level=getattr(t.ThinkingLevel, self._level.get(model, "MINIMAL")))
         return t.GenerateContentConfig(
             system_instruction=SYSTEM_INSTRUCTION,
             response_mime_type="application/json",
             response_json_schema=RESPONSE_SCHEMA,
             temperature=0.3,
             max_output_tokens=300,
-            thinking_config=t.ThinkingConfig(thinking_level=getattr(t.ThinkingLevel, self._level)),
+            thinking_config=berpikir,
         )
 
-    async def jawab(self, jpeg_bytes, isi_teks):
+    async def jawab(self, jpeg_bytes, isi_teks, model=None, ulang=True):
+        model = model or self.model
         isi = [self._types.Part.from_bytes(data=jpeg_bytes, mime_type="image/jpeg"), isi_teks]
-        ulang_sementara = True        # satu kali ulang untuk 429/503; batas waktu total dijaga pemanggil
+        ulang_sementara = ulang       # satu kali ulang untuk 429/503; batas waktu total dijaga pemanggil
         turun_level = True
         while True:
             try:
                 r = await self._client.aio.models.generate_content(
-                    model=self.model, contents=isi, config=self._config())
+                    model=model, contents=isi, config=self._config(model))
                 return r.text or ""
             except Exception as e:
                 kode = getattr(e, "code", None)
-                if kode == 400 and turun_level and self._level != "LOW" and "Thinking level" in self.sensor(e):
-                    turun_level, self._level = False, "LOW"
+                if (kode == 400 and turun_level and not self._seri_25(model) and self._level.get(model) != "LOW"
+                        and "Thinking level" in self.sensor(e)):
+                    turun_level, self._level[model] = False, "LOW"
                     continue
                 if kode in (429, 503) and ulang_sementara:
                     ulang_sementara = False
@@ -415,6 +433,20 @@ def _angka(nilai, bawaan, minimal=1):
     return n if n >= minimal else bawaan
 
 
+def _daftar_model(nilai, utama):
+    """Daftar model cadangan dari config: nama sah saja, tanpa duplikat dan tanpa model utama, paling banyak 3."""
+    if isinstance(nilai, str):
+        nilai = [nilai]
+    if not isinstance(nilai, (list, tuple)):
+        return []
+    hasil = []
+    for x in nilai:
+        nama = x.strip() if isinstance(x, str) else ""
+        if POLA_NAMA_MODEL.fullmatch(nama) and nama != utama and nama not in hasil:
+            hasil.append(nama)
+    return hasil[:MAKS_MODEL_CADANGAN]
+
+
 class Pengaturan:
     """Bagian `zanite:` di config.yaml. Semua kunci boleh hilang: dipakai nilai bawaan."""
 
@@ -423,7 +455,13 @@ class Pengaturan:
         self.aktif = b.get("aktif", True) is not False
         self.penyedia = str(b.get("penyedia", "gemini")).lower()
         self.model = str(b.get("model", "gemini-3.1-flash-lite"))
-        self.batas_waktu_s = _angka(b.get("batas_waktu_s"), 8.0, minimal=0.05)
+        self.batas_waktu_s = _angka(b.get("batas_waktu_s"), 9.0, minimal=0.05)     # anggaran TOTAL semua model
+        self.model_cadangan = _daftar_model(b.get("model_cadangan"), self.model)
+        self.batas_model_utama_s = _angka(b.get("batas_model_utama_s"), 4.0, minimal=0.05)
+        self.sisa_min_cadangan_s = _angka(b.get("sisa_min_cadangan_s"), 1.5, minimal=0)   # sisa waktu minimal untuk mencoba model cadangan
+        # Pemutus sirkuit model utama: gagal sekian kali berturut-turut (0 = mati) -> dilewati selama lama_lewati_utama_s
+        self.lewati_utama_setelah_gagal = int(_angka(b.get("lewati_utama_setelah_gagal"), 2, minimal=0))
+        self.lama_lewati_utama_s = _angka(b.get("lama_lewati_utama_s"), 300.0, minimal=1)
         self.per_menit_per_klien = int(_angka(b.get("per_menit_per_klien"), 4))
         self.per_menit_global = int(_angka(b.get("per_menit_global"), 10))
         self.per_hari_global = int(_angka(b.get("per_hari_global"), 200))
@@ -471,6 +509,8 @@ class Zanite:
         self.pembatas = PembatasLaju(p.per_menit_per_klien, p.per_menit_global, p.per_hari_global, jam)
         self._deteksi = OrderedDict()           # sesi -> {"waktu", "objek", "pesan"}
         self._garam = secrets.token_hex(8)      # untuk hash sesi di log (berganti tiap server mulai)
+        self._gagal_utama = 0                   # pemutus sirkuit (di memori): gagal berturut-turut model utama
+        self._lewati_utama_sampai = None        # jam (self.jam) sampai kapan model utama dilewati
 
     @property
     def siap(self):
@@ -508,15 +548,17 @@ class Zanite:
     # ---- endpoint
 
     @staticmethod
-    def _balas(status, jawaban, jenis, alasan=None):
-        """alasan: kode pendek yang sama dengan yang dicatat di log (None untuk jawaban normal). Tidak pernah
-        memuat teks galat, ucapan, atau jawaban."""
-        return JSONResponse(status_code=status, content={"jawaban": jawaban, "jenis": jenis, "alasan": alasan})
+    def _balas(status, jawaban, jenis, alasan=None, model=None):
+        """alasan: kode pendek yang sama dengan yang dicatat di log (None untuk jawaban normal). model: nama model
+        yang menjawab (None bila tidak ada model yang menjawab). Tidak pernah memuat teks galat, ucapan, atau jawaban."""
+        return JSONResponse(status_code=status, content={"jawaban": jawaban, "jenis": jenis, "alasan": alasan, "model": model})
 
-    def _log(self, sesi, t0, jenis, penjaga=None):
+    def _log(self, sesi, t0, jenis, penjaga=None, model=None, coba=None):
+        """coba: percobaan per model ("m1:waktu-habis", "m2:ok"); dicatat hanya bila lebih dari satu model dicoba."""
         ms = round((time.perf_counter() - t0) * 1000)
         h = hashlib.sha256((self._garam + sesi).encode("utf-8", "replace")).hexdigest()[:8]
-        catat(f"{time.strftime('%H:%M:%S')} sesi={h} {ms} ms jenis={jenis}" + (f" penjaga={penjaga}" if penjaga else ""))
+        catat(f"{time.strftime('%H:%M:%S')} sesi={h} {ms} ms jenis={jenis}" + (f" penjaga={penjaga}" if penjaga else "")
+              + (f" model={model}" if model else "") + (" coba=" + ",".join(coba) if coba and len(coba) > 1 else ""))
 
     @staticmethod
     def _origin_sah(request):
@@ -624,15 +666,10 @@ class Zanite:
 
         # 9. Prompt + panggilan penyedia dengan batas waktu
         isi = susun_isi(ucapan, objek, pesan)
-        try:
-            mentah_jawaban = await asyncio.wait_for(self.penyedia.jawab(jpeg, isi), timeout=cfg.batas_waktu_s)
-        except asyncio.TimeoutError:
-            self._log(sesi, t0, "cadangan", "waktu-habis")
-            return self._balas(200, CADANGAN, "cadangan", "waktu-habis")
-        except Exception as e:
-            nama = self._nama_galat(e)
-            self._log(sesi, t0, "cadangan", nama)
-            return self._balas(200, CADANGAN, "cadangan", nama)
+        mentah_jawaban, model, galat, coba = await self._tanya_model(jpeg, isi)
+        if mentah_jawaban is None:
+            self._log(sesi, t0, "cadangan", galat, coba=coba)
+            return self._balas(200, CADANGAN, "cadangan", galat)
 
         # 10. Sisi keluaran
         try:
@@ -640,20 +677,97 @@ class Zanite:
             if not isinstance(jawaban, str):
                 raise ValueError
         except (ValueError, KeyError, TypeError):
-            self._log(sesi, t0, "cadangan", "json")
-            return self._balas(200, CADANGAN, "cadangan", "json")
+            self._log(sesi, t0, "cadangan", "json", model, coba)
+            return self._balas(200, CADANGAN, "cadangan", "json", model)
         jawaban = bersihkan_jawaban(jawaban)
         if jawaban == CADANGAN:             # kosong setelah dibersihkan (mis. hanya emoji)
-            self._log(sesi, t0, "cadangan", "kosong")
-            return self._balas(200, CADANGAN, "cadangan", "kosong")
+            self._log(sesi, t0, "cadangan", "kosong", model, coba)
+            return self._balas(200, CADANGAN, "cadangan", "kosong", model)
         if bocor_instruksi(jawaban):
-            self._log(sesi, t0, "cadangan", "bocor")
-            return self._balas(200, TOLAK_PERMINTAAN, "cadangan", "bocor")
+            self._log(sesi, t0, "cadangan", "bocor", model, coba)
+            return self._balas(200, TOLAK_PERMINTAAN, "cadangan", "bocor", model)
         if klaim_aman(jawaban):
-            self._log(sesi, t0, "cadangan", "klaim-aman")
-            return self._balas(200, KALIMAT_TIDAK_PASTI, "cadangan", "klaim-aman")
-        self._log(sesi, t0, "jawaban")
-        return self._balas(200, jawaban, "jawaban")
+            self._log(sesi, t0, "cadangan", "klaim-aman", model, coba)
+            return self._balas(200, KALIMAT_TIDAK_PASTI, "cadangan", "klaim-aman", model)
+        self._log(sesi, t0, "jawaban", None, model, coba)
+        return self._balas(200, jawaban, "jawaban", None, model)
+
+    @staticmethod
+    def _boleh_ganti_model(e):
+        """Galat yang boleh berpindah ke model cadangan: kode di KODE_GANTI_MODEL, atau tanpa kode HTTP (jaringan).
+        400/401/403/404 dan sejenisnya berhenti di sini."""
+        kode = getattr(e, "code", None)
+        return kode in KODE_GANTI_MODEL if isinstance(kode, int) else True
+
+    async def _tanya_model(self, jpeg, isi):
+        """Model utama dulu (paling lama batas_model_utama_s), lalu tiap model cadangan dengan SISA anggaran
+        batas_waktu_s (anggaran TOTAL, dihitung dari sini). Model cadangan dilewati bila sisa < sisa_min_cadangan_s.
+        Tanpa model cadangan, model utama memakai seluruh anggaran. Hanya galat/batas waktu penyedia yang
+        berpindah model; hasil penjaga kita (dicek sesudah ini) bersifat final.
+        Mengembalikan (teks mentah | None, model yang menjawab | None, alasan galat terakhir | None, percobaan)."""
+        cfg = self.pengaturan
+        daftar = [cfg.model] + list(cfg.model_cadangan)
+        mulai = time.perf_counter()
+        galat, coba = "waktu-habis", []
+        awal = 0
+        sisa_lewati = self._sisa_lewati_utama()
+        if sisa_lewati > 0:                       # pemutus sirkuit terbuka: mulai langsung dari cadangan pertama
+            awal = 1
+            coba.append(f"utama dilewati (sisa {round(sisa_lewati)} s)")
+        for i, m in enumerate(daftar):
+            if i < awal:
+                continue
+            sisa = cfg.batas_waktu_s - (time.perf_counter() - mulai)
+            terakhir = i == len(daftar) - 1
+            if i > 0 and sisa < cfg.sisa_min_cadangan_s:
+                break
+            batas = min(cfg.batas_model_utama_s, sisa) if (i == 0 and not terakhir) else sisa
+            try:
+                mentah = await asyncio.wait_for(self.penyedia.jawab(jpeg, isi, model=m, ulang=terakhir), timeout=batas)
+            except asyncio.TimeoutError:
+                galat = "waktu-habis"
+                coba.append(f"{m}:{galat}")
+                if i == 0:
+                    self._utama_gagal()
+                continue
+            except Exception as e:
+                galat = self._nama_galat(e)
+                coba.append(f"{m}:{galat}")
+                if not self._boleh_ganti_model(e):
+                    break                         # 400 dkk: bukan tanda model utama sakit, tidak dihitung
+                if i == 0:
+                    self._utama_gagal()
+                continue
+            coba.append(f"{m}:ok")
+            if i == 0:
+                self._utama_pulih()
+            return mentah, m, None, coba
+        return None, None, galat, coba
+
+    # ---- pemutus sirkuit model utama (di memori; hanya hasil model utama yang dihitung)
+
+    def _pemutus_aktif(self):
+        cfg = self.pengaturan
+        return cfg.lewati_utama_setelah_gagal > 0 and bool(cfg.model_cadangan)     # tanpa cadangan tidak ada tujuan lewat
+
+    def _sisa_lewati_utama(self):
+        """Detik tersisa model utama dilewati; 0 bila tidak dilewati."""
+        if not self._pemutus_aktif() or self._lewati_utama_sampai is None:
+            return 0
+        return max(0.0, self._lewati_utama_sampai - self.jam())
+
+    def _utama_gagal(self):
+        """Gagal (waktu habis/429/5xx/jaringan). Mencapai batas = dilewati lama_lewati_utama_s. Sesudah masa lewat habis,
+        satu kegagalan lagi langsung melewati lagi (hitungan baru direset oleh satu keberhasilan)."""
+        if not self._pemutus_aktif():
+            return
+        self._gagal_utama += 1
+        if self._gagal_utama >= self.pengaturan.lewati_utama_setelah_gagal:
+            self._lewati_utama_sampai = self.jam() + self.pengaturan.lama_lewati_utama_s
+
+    def _utama_pulih(self):
+        self._gagal_utama = 0
+        self._lewati_utama_sampai = None
 
     def _nama_galat(self, e):
         """Nama galat untuk log: jenis + kode HTTP bila ada. Pesan galat sengaja tidak dicatat
@@ -686,5 +800,5 @@ def buat_zanite(config, root):
     except Exception as e:
         catat(f"nonaktif (gagal menyiapkan penyedia: {type(e).__name__}).")
         return Zanite(None, pengaturan)
-    catat(f"aktif (model {pengaturan.model}).")
+    catat(f"aktif (model {pengaturan.model}" + (f", cadangan {', '.join(pengaturan.model_cadangan)}" if pengaturan.model_cadangan else "") + ").")
     return Zanite(penyedia, pengaturan)

@@ -761,33 +761,38 @@ async function tes(nama, fn) {
   });
 
   await tes("alasan di log HP: jenis, alasan, waktu round-trip, hitungan per jenis; tanpa teks jawaban", async () => {
-    const d = buatDunia({ tundaJawab: 1234, badanJawab: { jawaban: "TEKSRAHASIAJAWABAN di kiri", jenis: "cadangan", alasan: "waktu-habis" } });
+    const d = buatDunia({ tundaJawab: 1234, badanJawab: { jawaban: "TEKSRAHASIAJAWABAN di kiri", jenis: "cadangan", alasan: "waktu-habis", model: null } });
     await d.mulai();
     d.ucap("Zanite jelasin sekitar"); await d.maju(700 + 1300);
     const log = d.ctx.Zanite.debug().join(" | ");
-    cek("baris 'jawaban:' memuat jenis, alasan, ms", /jawaban: jenis=cadangan alasan=waktu-habis 12\d\d ms/.test(log), d.ctx.Zanite.debug().filter((x) => /jawaban:/.test(x)));
+    cek("baris 'jawaban:' memuat jenis, alasan, ms", /jawaban: jenis=cadangan alasan=waktu-habis model=- 12\d\d ms/.test(log), d.ctx.Zanite.debug().filter((x) => /jawaban:/.test(x)));
     const L = d.ctx.Zanite.laporan();
     cek("hitungan 'alasan cadangan per jenis'", /alasan cadangan per jenis: cadangan:waktu-habis=1/.test(L), L.split("\n").filter((x) => /alasan/.test(x)));
     cek("teks jawaban tidak ikut di log/laporan", !log.includes("TEKSRAHASIAJAWABAN") && !L.includes("TEKSRAHASIAJAWABAN"));
     // jawaban normal: alasan null -> '-', tidak masuk hitungan
-    const e = buatDunia({ tundaJawab: 500, badanJawab: { jawaban: "Di kiri ada pilar, sedang.", jenis: "jawaban", alasan: null } });
+    const e = buatDunia({ tundaJawab: 500, badanJawab: { jawaban: "Di kiri ada pilar, sedang.", jenis: "jawaban", alasan: null, model: "gemini-3.5-flash-lite" } });
     await e.mulai(); e.ucap("Zanite jelasin sekitar"); await e.maju(700 + 600);
-    cek("jawaban normal: alasan=-", /jawaban: jenis=jawaban alasan=- 5\d\d ms/.test(e.ctx.Zanite.debug().join(" | ")), e.ctx.Zanite.debug().slice(-4));
+    cek("jawaban normal: alasan=-", /jawaban: jenis=jawaban alasan=- model=gemini-3.5-flash-lite 5\d\d ms/.test(e.ctx.Zanite.debug().join(" | ")), e.ctx.Zanite.debug().slice(-4));
     cek("jawaban normal: tidak masuk hitungan alasan", /alasan cadangan per jenis: -/.test(e.ctx.Zanite.laporan()));
+    cek("model yang menjawab masuk laporan", /model yang menjawab: gemini-3\.5-flash-lite=1/.test(e.ctx.Zanite.laporan()), e.ctx.Zanite.laporan().split("\n").filter((x) => /model/.test(x)));
     // alasan aneh dari server (bukan kode) diganti, tidak disalin ke log
     const f = buatDunia({ tundaJawab: 100, badanJawab: { jawaban: "x", jenis: "cadangan", alasan: "ini pesan galat dengan spasi <b>" } });
     await f.mulai(); f.ucap("Zanite jelasin sekitar"); await f.maju(700 + 200);
     cek("alasan bukan kode: diganti '?'", /alasan=\? /.test(f.ctx.Zanite.debug().join(" | ")) && !f.ctx.Zanite.debug().join(" | ").includes("pesan galat"));
+    // nama model dari server disaring seperti alasan: bukan nama model = '-'
+    const m2 = buatDunia({ tundaJawab: 100, badanJawab: { jawaban: "x", jenis: "jawaban", alasan: null, model: "model aneh <b>" } });
+    await m2.mulai(); m2.ucap("Zanite jelasin sekitar"); await m2.maju(700 + 200);
+    cek("model bukan nama: '-', tidak disalin ke log", /model=- /.test(m2.ctx.Zanite.debug().join(" | ")) && !m2.ctx.Zanite.debug().join(" | ").includes("model aneh"));
     // kegagalan sisi HP
     const g = buatDunia({ galatJaringan: true });
     await g.mulai(); g.ucap("Zanite jelasin sekitar"); await g.maju(700 + 200);
-    cek("fetch gagal: jenis=jaringan alasan=galat-fetch", /jawaban: jenis=jaringan alasan=galat-fetch \d+ ms/.test(g.ctx.Zanite.debug().join(" | ")), g.ctx.Zanite.debug().slice(-3));
+    cek("fetch gagal: jenis=jaringan alasan=galat-fetch", /jawaban: jenis=jaringan alasan=galat-fetch model=- \d+ ms/.test(g.ctx.Zanite.debug().join(" | ")), g.ctx.Zanite.debug().slice(-3));
     const h = buatDunia({ kodeJawab: 502, tanpaJson: true });
     await h.mulai(); h.ucap("Zanite jelasin sekitar"); await h.maju(700 + 1100);
     cek("tanpa JSON: alasan=tanpa-json-http-502", /alasan=tanpa-json-http-502/.test(h.ctx.Zanite.debug().join(" | ")), h.ctx.Zanite.debug().slice(-3));
     const i = buatDunia({ tundaJawab: 12000 });
     await i.mulai(); i.ucap("Zanite jelasin sekitar"); await i.maju(700 + 10500);
-    cek("klien menyerah: alasan=waktu-klien", /alasan=waktu-klien 10\d\d\d ms/.test(i.ctx.Zanite.debug().join(" | ")), i.ctx.Zanite.debug().slice(-3));
+    cek("klien menyerah: alasan=waktu-klien", /alasan=waktu-klien model=- 10\d\d\d ms/.test(i.ctx.Zanite.debug().join(" | ")), i.ctx.Zanite.debug().slice(-3));
   });
 
   await tes("'peringatan ditahan saat fokus': dihitung tiap kali, baris log hanya sekali per pesan per fokus", async () => {

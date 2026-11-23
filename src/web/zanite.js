@@ -72,7 +72,7 @@
   const catatan = new Map();  // kunci hasil Chrome -> { teks, final, tPertama, tAkhir }
   const log = [];
   // Hitungan untuk "Salin log Zanite". Hanya angka; teks ucapan/jawaban tidak masuk sini.
-  const hitung = { wake: {}, gemaDibuang: 0, diterimaSaatBicara: 0, wakeSaatBicara: 0, peringatanDitahan: 0, alasanCadangan: {}, gemaLaluDiterima: 0, restartAlasan: {}, restartPengenal: 0, galatPengenal: {}, permintaan: 0, jawaban: {}, jawabanUsang: 0, bipGagal: 0 };
+  const hitung = { wake: {}, gemaDibuang: 0, diterimaSaatBicara: 0, wakeSaatBicara: 0, peringatanDitahan: 0, alasanCadangan: {}, modelJawab: {}, gemaLaluDiterima: 0, restartAlasan: {}, restartPengenal: 0, galatPengenal: {}, permintaan: 0, jawaban: {}, jawabanUsang: 0, bipGagal: 0 };
   const tambah = (obj, k) => { obj[k] = (obj[k] || 0) + 1; };
 
   function debug(teks) {
@@ -523,10 +523,11 @@
     try { jawaban = await mintaJawaban(teks); } catch (e) { jawaban = null; }
     if (!jawaban) jawaban = { teks: PESAN_JARINGAN, jenis: "jaringan", alasan: "galat" };
     // Hanya jenis, alasan (kode pendek), dan waktu; teks jawaban tidak dicatat.
-    debug("jawaban: jenis=" + jawaban.jenis + " alasan=" + (jawaban.alasan || "-") + " " + Math.round(jam() - t0) + " ms");
+    debug("jawaban: jenis=" + jawaban.jenis + " alasan=" + (jawaban.alasan || "-") + " model=" + (jawaban.model || "-") + " " + Math.round(jam() - t0) + " ms");
     if (id !== permintaanId) return;   // digantikan wake baru atau Berhenti
     tambah(hitung.jawaban, jawaban.jenis);
     if (jawaban.alasan) tambah(hitung.alasanCadangan, jawaban.jenis + ":" + jawaban.alasan);
+    if (jawaban.model) tambah(hitung.modelJawab, jawaban.model);
     fase = "diam";
     tampilDiam();
     if (gen !== appGenerasi() || jam() - t0 > WAKTU_PERMINTAAN_MS) {
@@ -566,7 +567,9 @@
       // Kalimat dari server (juga untuk 429/400/403) diucapkan apa adanya; tanpa JSON = masalah jaringan/server.
       if (data && typeof data.jawaban === "string" && data.jawaban) {
         const a = typeof data.alasan === "string" && /^[A-Za-z0-9_-]{1,40}$/.test(data.alasan) ? data.alasan : (data.alasan ? "?" : null);
-        return { teks: data.jawaban, jenis: typeof data.jenis === "string" ? data.jenis : "?", alasan: a };
+        // model yang menjawab (model utama atau cadangan di server); nama saja, disaring seperti alasan
+        const m = typeof data.model === "string" && /^[A-Za-z0-9._-]{1,60}$/.test(data.model) ? data.model : null;
+        return { teks: data.jawaban, jenis: typeof data.jenis === "string" ? data.jenis : "?", alasan: a, model: m };
       }
       return { teks: PESAN_JARINGAN, jenis: "jaringan", alasan: "tanpa-json-http-" + res.status };
     } catch (e) {
@@ -690,6 +693,7 @@
         "permintaan terkirim": hitung.permintaan,
         "jawaban per jenis": hitung.jawaban,
         "alasan cadangan per jenis": hitung.alasanCadangan,
+        "model yang menjawab": hitung.modelJawab,
         "jawaban usang dibuang": hitung.jawabanUsang,
         "bip gagal": hitung.bipGagal,
       },
