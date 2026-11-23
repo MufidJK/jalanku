@@ -22,6 +22,7 @@ PORT = 8443
 ROOT = Path(__file__).resolve().parent.parent
 HP_DIR = ROOT / "spike" / "hp"
 MODEL_DIR = ROOT / "models" / "onnx"
+ZANITE_DIR = ROOT / "spike" / "zanite" / "hp"   # spike Zanite: /zanite/
 CERT = ROOT / "data" / "https" / "jalanku.crt"
 KEY = ROOT / "data" / "https" / "jalanku.key"
 
@@ -36,6 +37,8 @@ class Handler(SimpleHTTPRequestHandler):
         path = path.split("?", 1)[0].split("#", 1)[0]
         if path.startswith("/models/"):
             base, rel = MODEL_DIR, path[len("/models/"):]
+        elif path == "/zanite" or path.startswith("/zanite/"):
+            base, rel = ZANITE_DIR, path[len("/zanite/"):] if path != "/zanite" else ""
         else:
             base, rel = HP_DIR, path.lstrip("/") or "index.html"
         target = (base / Path(*[p for p in rel.split("/") if p not in ("", ".", "..")])).resolve()
