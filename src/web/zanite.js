@@ -2,9 +2,9 @@
 // Aturan keputusan murni ada di zanite-aturan.js; pencocok kata bangun di zanite-cocok.js (salinan spike).
 //
 // Aturan utama: mic TIDAK PERNAH dimatikan agar tidak mendengar suara app sendiri (setiap buka ulang,
-// Android membunyikan suara Asisten Google). Transkrip yang datang saat app bicara (dan 500 ms sesudahnya)
-// dibuang HANYA bila mirip teks ucapan app sendiri (gema); suara pengguna tetap diproses. Berlaku untuk semua
-// ucapan app: peringatan, pesan sistem, jawaban Zanite. Penjaga kedua terhadap bangun sendiri: aturan kata
+// Android membunyikan suara Asisten Google). Dari AWAL tiap transkrip dibuang kata-kata yang cocok dengan ucapan
+// app 60 detik terakhir (gema: peringatan, pesan sistem, balasan dan jawaban Zanite); hanya sisanya (suara pengguna)
+// yang diteruskan ke pencocok kata bangun dan jendela perintah. Penjaga kedua terhadap bangun sendiri: aturan kata
 // bangun yang ketat (varian sendirian, diam 800/1200 ms).
 //
 // Fokus Zanite: hanya selama pengguna bicara, yaitu sejak kata bangun sampai perintah tertangkap (kirimPerintah
@@ -23,6 +23,9 @@
   const PESAN_JARINGAN = "Zanite butuh internet atau server sedang bermasalah.";
   const PESAN_KAMERA = "Maaf, kamera belum siap.";
   const PESAN_IZIN = "Izin mikrofon ditolak, Zanite mati.";
+  const PESAN_TAK_TERDENGAR = "Maaf, tidak terdengar. Panggil Zanite lagi.";
+  const PESAN_TUNGGU = "Sebentar.";
+  const TUNGGU_JAWAB_MS = 2500;      // belum ada jawaban server sesudah sekian ms: ucapkan "Sebentar." sekali
   const JENDELA_MS = 6000;          // jendela perintah, dihitung dari akhir balasan
   const WAKTU_PERMINTAAN_MS = 10000; // batas klien; jawaban lebih lama dari ini dibuang
   const DIAM_MS = 800;              // kata bangun sendirian: nyala setelah sekian ms tanpa kata baru
@@ -37,7 +40,12 @@
   const JEDA_CANCEL_MS = 150;       // jarak minimal antara cancel() dan bip/ucapan Zanite berikutnya (Chrome HP)
   const TUNGGU_T3_MS = 4000;        // balasan menunggu ucapan lain (tingkat 3) paling lama sekian ms
   const FOKUS_MAKS_MS = 12000;      // batas keras fokus Zanite sejak kata bangun (balasan ~3 dtk + jendela 6 dtk + sisa)
-  const VERSI = "zanite-app-4";
+  const BARIS_MAKS = 500;             // satu baris log paling panjang sekian karakter
+  const UNGGAH_MS = 60000;            // log diunggah ke server tiap sekian ms selama Zanite hidup
+  const UNGGAH_JARAK_MS = 20000;      // batas server: 1 unggahan per sekian ms per sesi
+  const UNGGAH_MAKS_BYTE = 190000;    // batas server 200 KB
+  const BEACON_MAKS_BYTE = 60000;     // sendBeacon/keepalive browser dibatasi 64 KB
+  const VERSI = "zanite-app-5";
 
   const daftar = ZC.parseDaftar(ZC.DAFTAR_AWAL);
   const sendiriSaja = ZC.parseDaftar(ZC.SENDIRI_SAJA_AWAL);
@@ -69,16 +77,19 @@
   let hasilDiJendela = 0;          // hasil yang datang sejak jendela perintah dibuka
   let cekPengenalTimer = null, tDenyut = -Infinity;
   const gemaPerKunci = new Map();  // kunci hasil -> waktu: hasil yang dibuang sebagai gema
+  let unggahTimer = null, pernahHidup = false;
+  const tUnggah = new Map(), unggahTunda = new Map();   // sesi -> waktu unggah terakhir / pengatur waktu tunda
   const catatan = new Map();  // kunci hasil Chrome -> { teks, final, tPertama, tAkhir }
   const log = [];
   // Hitungan untuk "Salin log Zanite". Hanya angka; teks ucapan/jawaban tidak masuk sini.
-  const hitung = { wake: {}, gemaDibuang: 0, diterimaSaatBicara: 0, wakeSaatBicara: 0, peringatanDitahan: 0, alasanCadangan: {}, modelJawab: {}, gemaLaluDiterima: 0, restartAlasan: {}, restartPengenal: 0, galatPengenal: {}, permintaan: 0, jawaban: {}, jawabanUsang: 0, bipGagal: 0 };
+  const hitung = { wake: {}, gemaDibuang: 0, diterimaSaatBicara: 0, wakeSaatBicara: 0, peringatanDitahan: 0, alasanCadangan: {}, modelJawab: {}, gemaLaluDiterima: 0, restartAlasan: {}, restartPengenal: 0, galatPengenal: {}, permintaan: 0, jawaban: {}, jawabanUsang: 0, bipGagal: 0, gemaDipotong: 0, sebentar: 0, jendelaKosong: 0, unggah: {} };
   const tambah = (obj, k) => { obj[k] = (obj[k] || 0) + 1; };
 
   function debug(teks) {
     let jamDinding = "";
     try { jamDinding = new Date().toISOString().slice(11, 23) + " "; } catch (e) { /* abaikan */ }
-    log.push(jamDinding + "+" + Math.round(jam()) + "ms " + teks);
+    const isi = String(teks);
+    log.push(jamDinding + "+" + Math.round(jam()) + "ms " + (isi.length > BARIS_MAKS ? isi.slice(0, BARIS_MAKS) + "..." : isi));
     if (log.length > CATATAN_MAKS) log.shift();
   }
 
@@ -293,15 +304,18 @@
       tHasil = jam();
       hasilDiJendela += 1;
       for (let j = 1; j < r.length; j++) debug("alt" + j + ": " + r[j].transcript);   // alternatif hanya dicatat
-      let saatBicara = false;
-      if (sedangBicara()) {
-        if (ZA.gemaApp(mentah, pelacak.teksBicara())) {
-          hitung.gemaDibuang += 1;
-          gemaPerKunci.set(key, jam());
-          debug("gema dibuang: " + mentah);
-          continue;
-        }
-        saatBicara = true;
+      const bicara = sedangBicara();       // juga menyegarkan pelacak sebelum teks app dibaca
+      const sisa = ZA.sisaSetelahGema(mentah, pelacak.teksBicara(), pelacak.teksSedang());
+      if (!sisa) {
+        hitung.gemaDibuang += 1;
+        gemaPerKunci.set(key, jam());
+        debug("gema dibuang: " + mentah);
+        tarikHasil(jam(), key, final);
+        continue;
+      }
+      const dipotong = sisa !== mentah;
+      if (dipotong) hitung.gemaDipotong += 1;
+      if (bicara) {
         hitung.diterimaSaatBicara += 1;
         tTerimaBicara = jam();
       }
@@ -309,22 +323,32 @@
       if (gemaPerKunci.has(key)) {
         hitung.gemaLaluDiterima += 1;
         gemaPerKunci.delete(key);
-        debug("gema dibuang lalu kalimat yang sama diterima: " + mentah);
+        debug("gema dibuang lalu kalimat yang sama diterima: " + sisa);
       }
       for (const [k, v] of gemaPerKunci) if (jam() - v > 15000) gemaPerKunci.delete(k);
-      terimaTeks(jam(), key, mentah, final, saatBicara);
+      terimaTeks(jam(), key, sisa, final, bicara, dipotong ? mentah : null);
     }
   }
 
-  // Satu transkrip yang lolos penyaringan. Dipisah dari onResult supaya mudah dites.
-  function terimaTeks(now, key, mentah, final, saatBicara) {
+  // Hasil yang tadinya diteruskan ternyata seluruhnya gema (potongan awalnya belum cocok): tarik kembali.
+  function tarikHasil(now, key, final) {
+    if (!catatan.delete(key)) return;
+    if (jendela) jendela.terima(now, key, "", final);
+    if (P) proses(P.masuk(now, key, "", final));
+    jadwalPemicu();
+    jadwalJendela();
+  }
+
+  // Satu transkrip (sesudah gema di awalnya dibuang). Dipisah dari onResult supaya mudah dites.
+  // asal: transkrip lengkap bila ada gema yang dibuang (hanya untuk log).
+  function terimaTeks(now, key, mentah, final, saatBicara, asal) {
     if (!hidup || fatal) return;
     const teks = ZA.ubahJadi(mentah);
     const c = catatan.get(key);
     if (c) { c.teks = teks; c.final = final; c.tAkhir = now; }
     else catatan.set(key, { teks, final, tPertama: now, tAkhir: now });
     for (const [k, v] of catatan) if (now - v.tAkhir > 15000) catatan.delete(k);
-    debug((final ? "F " : "I ") + (saatBicara ? "(app bicara) " : "") + teks);
+    debug((final ? "F " : "I ") + (saatBicara ? "(app bicara) " : "") + teks + (asal ? "   [gema dipotong dari: " + asal + "]" : ""));
     if (jendela) jendela.terima(now, key, teks, final);
     if (P) proses(P.masuk(now, key, teks, final));
     jadwalPemicu();
@@ -468,7 +492,8 @@
 
   function bukaJendela(inline) {
     tutupJendela();
-    jendela = ZA.buatJendela({ t: jam(), bukaMs: JENDELA_MS, inline });
+    // gema balasan yang menempel di hasil yang sama dengan kata bangun bukan perintah
+    jendela = ZA.buatJendela({ t: jam(), bukaMs: JENDELA_MS, inline, gema: (cmd) => ZA.potonganDari(cmd, BALAS, 3) });
     hasilDiJendela = 0;
     fase = "jendela";
     tampilStatus("Zanite mendengar");
@@ -492,10 +517,12 @@
     if (!a) { jadwalJendela(); return; }
     const inline = jendela.inline;
     jendela = null;
-    if (a.aksi === "tutup") {          // 6 detik tanpa suara: tutup diam-diam
+    if (a.aksi === "tutup") {          // 6 detik tanpa perintah: tutup dan beri tahu pengguna sekali
       fase = "diam";
       tampilDiam();
       akhiriFokus(null, "jendela habis tanpa perintah");
+      hitung.jendelaKosong += 1;
+      ucapkanZ(PESAN_TAK_TERDENGAR, "tutup");
       // Jendela habis dan tidak satu hasil pun datang: pengenal mungkin hidup tetapi tuli. Mulai ulang sekali.
       if (hasilDiJendela === 0) mulaiUlangPengenal("jendela-kosong");
       return;
@@ -520,7 +547,13 @@
     debug("kirim: " + teks);
     let jawaban = null;
     hitung.permintaan += 1;
+    const tunggu = setTimeout(() => {
+      if (id !== permintaanId || gen !== appGenerasi()) return;
+      hitung.sebentar += 1;
+      ucapkanZ(PESAN_TUNGGU, "tunggu");      // jawaban yang datang sesudahnya antre di belakangnya
+    }, TUNGGU_JAWAB_MS);
     try { jawaban = await mintaJawaban(teks); } catch (e) { jawaban = null; }
+    clearTimeout(tunggu);
     if (!jawaban) jawaban = { teks: PESAN_JARINGAN, jenis: "jaringan", alasan: "galat" };
     // Hanya jenis, alasan (kode pendek), dan waktu; teks jawaban tidak dicatat.
     debug("jawaban: jenis=" + jawaban.jenis + " alasan=" + (jawaban.alasan || "-") + " model=" + (jawaban.model || "-") + " " + Math.round(jam() - t0) + " ms");
@@ -568,7 +601,7 @@
       if (data && typeof data.jawaban === "string" && data.jawaban) {
         const a = typeof data.alasan === "string" && /^[A-Za-z0-9_-]{1,40}$/.test(data.alasan) ? data.alasan : (data.alasan ? "?" : null);
         // model yang menjawab (model utama atau cadangan di server); nama saja, disaring seperti alasan
-        const m = typeof data.model === "string" && /^[A-Za-z0-9._-]{1,60}$/.test(data.model) ? data.model : null;
+        const m = typeof data.model === "string" && /^[A-Za-z0-9._\/-]{1,60}$/.test(data.model) ? data.model : null;
         return { teks: data.jawaban, jenis: typeof data.jenis === "string" ? data.jenis : "?", alasan: a, model: m };
       }
       return { teks: PESAN_JARINGAN, jenis: "jaringan", alasan: "tanpa-json-http-" + res.status };
@@ -609,11 +642,16 @@
     if (!jedaPengenal) startRec();
     tampilDiam();
     mulaiPemeriksaPengenal();
+    pernahHidup = true;
+    mulaiUnggahBerkala();
   }
 
   function berhenti(dari) {
     debug("berhenti() oleh " + (dari || "?") + (hidup ? "" : " (sudah mati)"));
+    const tadinyaHidup = hidup;
     berhentiPemeriksaPengenal();
+    clearTimeout(unggahTimer);
+    unggahTimer = null;
     tokenMulai += 1;
     memeriksa = false;
     hidup = false;
@@ -624,6 +662,7 @@
     rec = null;
     P = null;
     catatan.clear();
+    if (tadinyaHidup) unggahLog();       // Berhenti dan jedaOtomatis: simpan log di server
   }
 
   function bisuBerubah(nilai) {
@@ -658,7 +697,8 @@
     if (n) debug("cancel: " + n + " ucapan diakhiri");
   }
 
-  // ---- log uji: disalin lewat tombol di panel Atur. Tidak ada yang dikirim ke mana pun.
+  // ---- log uji: disalin lewat tombol di panel Atur, dan diunggah otomatis ke server app ini sendiri
+  // (/api/zanite/log) supaya tidak hilang bila halaman tertutup. Isinya memuat transkrip yang terdengar mic.
   function infoSuara() {
     try {
       const v = typeof pilihSuaraIndonesia === "function" ? pilihSuaraIndonesia() : null;
@@ -666,7 +706,7 @@
     } catch (e) { return "?"; }
   }
 
-  function laporan() {
+  function laporan(maksBaris) {
     const st = pelacak.statistik();
     let waktu = "?";
     try { waktu = new Date().toISOString(); } catch (e) { /* abaikan */ }
@@ -696,10 +736,76 @@
         "model yang menjawab": hitung.modelJawab,
         "jawaban usang dibuang": hitung.jawabanUsang,
         "bip gagal": hitung.bipGagal,
+        "gema dipotong dari awal transkrip": hitung.gemaDipotong,
+        "'Sebentar.' diucapkan": hitung.sebentar,
+        "jendela tutup tanpa perintah": hitung.jendelaKosong,
+        "unggah log": hitung.unggah,
       },
-      baris: log,
+      baris: maksBaris === undefined ? log : maksBaris > 0 ? log.slice(-maksBaris) : [],
     });
   }
+
+  function byteUtf8(teks) {
+    let n = 0;
+    for (const c of teks) { const k = c.codePointAt(0); n += k < 128 ? 1 : k < 2048 ? 2 : k < 65536 ? 3 : 4; }
+    return n;
+  }
+
+  // Teks yang sama dengan "Salin log Zanite"; baris tertua dibuang bila melebihi batas ukuran.
+  function teksUnggah(maksByte) {
+    let n = CATATAN_MAKS, teks = laporan();
+    while (byteUtf8(teks) > maksByte && n > 0) { n = Math.floor(n * 0.8); teks = laporan(n); }
+    return teks;
+  }
+
+  const alamatUnggah = (s) => alamatServer() + "/api/zanite/log?sesi=" + encodeURIComponent(s);
+
+  // Gagal diam-diam: hanya dihitung.
+  function kirimLog(s, keepalive) {
+    tUnggah.set(s, jam());
+    const gagal = () => tambah(hitung.unggah, "gagal");
+    try {
+      const opsi = { method: "POST", headers: { "Content-Type": "text/plain;charset=UTF-8" }, body: teksUnggah(keepalive ? BEACON_MAKS_BYTE : UNGGAH_MAKS_BYTE) };
+      if (keepalive) opsi.keepalive = true;
+      fetch(alamatUnggah(s), opsi).then((res) => (res.ok ? tambah(hitung.unggah, "ok") : gagal()), gagal);
+    } catch (e) { gagal(); }
+  }
+
+  // Bila baru saja mengunggah (batas server 20 dtk), unggahan ditunda, bukan dibuang.
+  function unggahLog() {
+    if (modeMock()) return;
+    const s = sesi();
+    if (unggahTunda.has(s)) return;      // sudah dijadwalkan; isinya dibaca saat dikirim
+    const sisa = UNGGAH_JARAK_MS - (jam() - (tUnggah.has(s) ? tUnggah.get(s) : -Infinity));
+    if (sisa <= 0) { kirimLog(s); return; }
+    unggahTunda.set(s, setTimeout(() => { unggahTunda.delete(s); kirimLog(s); }, sisa + 500));
+  }
+
+  // Halaman ditutup: sendBeacon tetap terkirim sesudah halaman hilang.
+  function unggahSaatTutup() {
+    if (!pernahHidup || modeMock()) return;
+    const s = sesi();
+    let antre = false;
+    try {
+      const nav = root.navigator;
+      antre = !!(nav && nav.sendBeacon && nav.sendBeacon(alamatUnggah(s), teksUnggah(BEACON_MAKS_BYTE)));
+    } catch (e) { antre = false; }
+    if (antre) { tUnggah.set(s, jam()); tambah(hitung.unggah, "beacon"); }
+    else kirimLog(s, true);
+  }
+
+  function mulaiUnggahBerkala() {
+    clearTimeout(unggahTimer);
+    unggahTimer = setTimeout(() => {
+      if (!hidup) return;
+      unggahLog();
+      mulaiUnggahBerkala();
+    }, UNGGAH_MS);
+  }
+
+  try {
+    if (typeof root.addEventListener === "function") root.addEventListener("pagehide", unggahSaatTutup);
+  } catch (e) { /* abaikan */ }
 
   // Salin ke papan klip; kalau API-nya gagal, tampilkan teksnya di <textarea> supaya bisa dipilih manual.
   async function salinLog() {

@@ -257,32 +257,72 @@ for (const t of ["", "   ", "Zanite", "janet", "jani", "Danis", "eh zanite", "za
   cek("laporan: tanpa masukan tidak error", typeof ZA.susunLaporan({}) === "string" && /0 BARIS TERAKHIR/.test(ZA.susunLaporan({})));
 }
 
-// ---- penyaring gema (gemaApp): dibuang hanya bila mirip teks ucapan app sendiri
+// ---- penyaring gema (sisaSetelahGema): gema dibuang kata demi kata dari awal transkrip
 {
-  const A = ["Hati-hati, jalur tidak terlihat"];
-  const ya = (t, app = A) => ZA.gemaApp(t, app) === true, tdk = (t, app = A) => ZA.gemaApp(t, app) === false;
-  cek("gema persis (tanpa tanda baca) dibuang", ya("hati hati jalur tidak terlihat"));
-  cek("gema dengan huruf besar dan tanda baca dibuang", ya("Hati-hati, jalur tidak terlihat!"));
-  cek("gema sebagian (semua kata ada di teks) dibuang", ya("jalur tidak terlihat"));
-  cek("'Janet' saat peringatan: diterima", tdk("Janet"));
-  cek("'Zanite' saat peringatan: diterima", tdk("Zanite"));
-  cek("'di depan ada apa': diterima", tdk("di depan ada apa"));
-  cek("'Kanit di depan ada apa': diterima", tdk("Kanit di depan ada apa"));
-  // 1 kata: hanya bila kata itu ada di teks app
-  cek("1 kata yang ada di teks app: dibuang", ya("jalur") && ya("Terlihat."));
-  cek("1 kata yang tidak ada di teks app: diterima", tdk("janit") && tdk("depan"));
-  // ambang 60%
-  cek("3 dari 5 kata (60%) tepat di ambang: dibuang", ya("jalur tidak terlihat lalu apa"));
-  cek("2 dari 5 kata (40%): diterima", tdk("jalur tidak lalu apa depan"));
-  cek("2 dari 4 kata (50%): diterima", tdk("jalur tidak lalu apa"));
-  cek("2 dari 3 kata (67%): dibuang", ya("jalur tidak apa"));
-  // per ucapan, bukan gabungan semua ucapan
-  const dua = ["Pilar di kiri, dekat", "Tangga di depan"];
-  cek("kata tersebar di dua ucapan berbeda tidak dihitung gabungan (2/5 + 2/5)", tdk("pilar tangga kiri depan apa", dua));
-  cek("cocok dengan salah satu ucapan: dibuang", ya("tangga di depan", dua) && ya("pilar di kiri dekat", dua));
-  cek("tanpa ucapan app: tidak ada gema", tdk("hati hati jalur tidak terlihat", []) && tdk("apa", undefined));
-  cek("transkrip kosong/tanda baca saja: bukan gema", tdk("", A) && tdk("...", A));
-  cek("kata bangun yang kebetulan ada di teks app: dibuang hanya bila persis kata app", ya("zanite", ["Zanite siap"]) && tdk("zanite", A));
+  const PERINGATAN = ["Hati-hati, jalur tidak terlihat", "Jalur terhalang", "Area kendaraan, hati-hati", "Kendaraan di depan, dekat"];
+  const BALAS = "Iya, ada yang bisa saya bantu?";
+  const JAWAB = "Di depan ada beberapa mobil yang terparkir di sebelah kiri, jaraknya sedang. Ada pilar di kanan, dekat, dan kerucut lalu lintas di tengah, jauh.";
+  const app = PERINGATAN.concat([BALAS, JAWAB]);
+  const sisa = (t, a = app, s) => ZA.sisaSetelahGema(t, a, s);
+  const sama = (nama, t, harap, a, s) => cek(nama, sisa(t, a, s) === harap, sisa(t, a, s));
+  const wake = (t) => { const k = kl(t); return !!k && k.tipe === "sendiri"; };
+
+  // string persis dari log uji HP ke-4
+  sama("log 1: sisa 'Janet'", "hati-hati jalur tidak terlihat Janet", "Janet");
+  cek("log 1: menyala", wake(sisa("hati-hati jalur tidak terlihat Janet")));
+  sama("log 2: sisa 'Janet Janet'", "jalur terhalang hati-hati jalur tidak terlihat jalur terhalang Janet Janet", "Janet Janet");
+  cek("log 2: 'Janet Janet' = satu panggilan sendirian", wake("Janet Janet"));
+  sama("log 3 (gema + derau): hanya 'oh' yang tersisa", "kendaraan di depan hati-hati kendaraan di depan oh", "oh");
+  cek("log 3: tidak membangunkan", !wake("oh"));
+
+  // gema murni
+  for (const t of ["hati-hati jalur tidak terlihat", "Hati-hati, jalur tidak terlihat!", "jalur tidak terlihat", "jalur",
+    "kendaraan di depan hati-hati kendaraan di depan", "jalur terhalang jalur terhalang", "iya ada yang bisa saya bantu"])
+    sama("gema murni dibuang: " + t, t, "");
+  sama("jawaban panjang Zanite sebagai gema: dibuang", "di depan ada beberapa mobil yang terparkir di sebelah kiri jaraknya sedang ada pilar di kanan dekat dan kerucut lalu lintas di tengah jauh", "");
+  sama("jawaban panjang, mic mulai di tengah dan kata terpotong", "mobil yang terparkir di sebelah kiri jaraknya sedang ada pil", "");
+  sama("kata terpotong >= 3 huruf: 'kendara'", "area kendara", "");
+  sama("kata terpotong: 'terha'", "jalur terha", "");
+  sama("potongan 2 huruf tidak dihitung", "jalur tidak te", "te");
+
+  // suara pengguna
+  sama("teman saya Janet: tidak disentuh", "teman saya Janet", "teman saya Janet");
+  cek("teman saya Janet: tetap ditolak", kl(sisa("teman saya Janet")).tipe === "ditolak");
+  sama("perintah menempel sesudah gema", "hati-hati jalur tidak terlihat jelaskan sekitar", "jelaskan sekitar");
+  sama("kata sesudah suara pengguna tidak disentuh", "jalur terhalang Janet jalur terhalang", "Janet jalur terhalang");
+  sama("huruf dan tanda baca sisa dipertahankan", "Jalur terhalang. Itu apa di depan?", "Itu apa di depan?");
+  sama("tanpa ucapan app: transkrip utuh", "hati-hati jalur tidak terlihat", "hati-hati jalur tidak terlihat", []);
+  sama("tanda baca saja: bukan gema", "...", "...");
+  sama("satu kata di tengah kalimat tidak ikut dimakan sesudah potongan pertama", "jalur terhalang saya", "saya");
+  // keterbatasan yang diketahui (aturan literal): kata awal pengguna yang sama dengan ucapan app ikut dibuang
+  sama("keterbatasan: 'di depan ada apa' sesudah peringatan 'di depan' + balasan", "di depan ada apa", "ada apa", ["Kendaraan di depan, dekat", BALAS]);
+
+  // kata bangun sendirian vs kalimat app yang memuatnya
+  const P = "Maaf, tidak terdengar. Panggil Zanite lagi.", J = "Zanite butuh internet atau server sedang bermasalah.";
+  sama("gema pesan 'tidak terdengar' utuh: dibuang", "maaf tidak terdengar panggil zanite lagi", "", [P], [P]);
+  sama("sesudah pesan selesai: 'Zanite' dari pengguna diteruskan", "Zanite", "Zanite", [P], []);
+  sama("sesudah PESAN_JARINGAN selesai: 'Zanite' diteruskan", "Zanite", "Zanite", [J], []);
+  sama("gema pesan lalu pengguna memanggil", "maaf tidak terdengar panggil zanite lagi Zanite", "Zanite", [P], []);
+  sama("selama pesan masih berbunyi: 'zanite' sendirian = gema", "zanite", "", [J], [J]);
+
+  cek("potonganDari: gema balasan", ZA.potonganDari("iya ada yang bisa saya bantu", BALAS, 3) && ZA.potonganDari("yang bisa saya", BALAS, 3));
+  cek("potonganDari: pertanyaan pengguna bukan gema", !ZA.potonganDari("ada tangga di depan", BALAS, 3) && !ZA.potonganDari("iya ada", BALAS, 3));
+}
+
+// ---- varian diulang = satu panggilan
+for (const t of ["Janet Janet", "janet janit", "zanite zanite zanite", "halo Janet Janet"]) cek("ulangan sendirian: " + t, kl(t).tipe === "sendiri", kl(t));
+{ const k = kl("Janet Janet jelaskan sekitar"); cek("ulangan + perintah", k.tipe === "perintah" && k.cmd === "jelaskan sekitar", k); }
+cek("ulangan tidak meloloskan kalimat lain", kl("teman saya Janet Janet").tipe === "ditolak" && kl("Janet Janet temanku").tipe === "ditolak");
+cek("ambilPerintah: ulangan dibuang", ZA.ambilPerintah("Janet Janet") === null && ZA.ambilPerintah("Janet Janet di depan ada apa") === "di depan ada apa" && ZA.ambilPerintah("Janet di depan ada apa") === "di depan ada apa");
+
+// ---- jendela: hasil yang ditarik kembali / gema balasan bukan perintah
+{
+  const w = ZA.buatJendela({ t: 0 });
+  w.terima(1000, "a", "ba", false); w.terima(1200, "a", "", false);
+  cek("ditarik kembali: tidak mengirim perintah kosong", w.periksa(2500) === null && w.jatuhTempo() === 6000);
+  const g = ZA.buatJendela({ t: 0, gema: (c) => ZA.potonganDari(c, "Iya, ada yang bisa saya bantu?", 3) });
+  g.terima(1000, "a", "Janet iya ada yang bisa saya bantu", false);
+  cek("gema balasan sesudah kata bangun: bukan perintah", g.teks() === "" && g.jatuhTempo() === 6000, g.teks());
 }
 
 // ---- pelacak: teks ucapan (bahan gema) dan tingkat 3
@@ -293,15 +333,19 @@ for (const t of ["", "   ", "Zanite", "janet", "jani", "Danis", "eh zanite", "za
   const b = p.mulai(15000, { teks: "Tangga di depan", tingkat: 3 });
   cek("dua ucapan tercatat: teksnya ada, tingkat 3 terdeteksi", p.teksBicara().length === 2 && p.adaTingkat3() === true, p.teksBicara());
   t = 800; p.selesai(b);
-  cek("t3 selesai: bukan t3 lagi, teksnya masih dihitung < 1,5 dtk", p.adaTingkat3() === false && p.teksBicara().includes("Tangga di depan"), p.teksBicara());
-  t = 2299; cek("1499 ms sesudah selesai: teks masih ada", p.teksBicara().includes("Tangga di depan"));
-  t = 2300; cek("1500 ms sesudah selesai: teks dilepas", !p.teksBicara().includes("Tangga di depan") && p.teksBicara().includes("Pilar di kiri, dekat"), p.teksBicara());
-  p.selesaiSemua(); t = 2400;
-  cek("cancel: teks yang dibatalkan masih dihitung gema sebentar", p.teksBicara().includes("Pilar di kiri, dekat"));
-  t = 3900; cek("lewat 1,5 dtk: bersih", p.teksBicara().length === 0, p.teksBicara());
+  cek("t3 selesai: bukan t3 lagi, teksnya masih dihitung", p.adaTingkat3() === false && p.teksBicara().includes("Tangga di depan"), p.teksBicara());
+  cek("dalam ekor 500 ms: masih 'sedang'", p.teksSedang().includes("Tangga di depan"));
+  t = 1300; cek("sesudah ekor: tidak 'sedang' lagi", !p.teksSedang().includes("Tangga di depan") && p.teksSedang().includes("Pilar di kiri, dekat"), p.teksSedang());
+  t = 60799; cek("59999 ms sesudah selesai: teks masih ada", p.teksBicara().includes("Tangga di depan"));
+  t = 14000; p.selesaiSemua();
+  t = 60800; cek("60 dtk sesudah selesai: teks dilepas", !p.teksBicara().includes("Tangga di depan") && p.teksBicara().includes("Pilar di kiri, dekat"), p.teksBicara());
+  cek("cancel: teks yang dibatalkan masih dihitung", p.teksSedang().length === 0 && p.teksBicara().includes("Pilar di kiri, dekat"));
+  t = 74000; cek("lewat 60 dtk: bersih", p.teksBicara().length === 0, p.teksBicara());
   const bip = p.mulai(900, { tanpaSintesis: true });
   cek("bip tanpa teks tidak masuk bahan gema", p.teksBicara().length === 0);
-  p.selesai(bip); t = 4000; cek("bip selesai: tetap tanpa teks", p.teksBicara().length === 0);
+  p.selesai(bip); t = 75000; cek("bip selesai: tetap tanpa teks", p.teksBicara().length === 0);
+  const x = p.mulai(15000, { teks: "Jalur terhalang" }); p.selesai(x); const y = p.mulai(15000, { teks: "Jalur terhalang" }); p.selesai(y);
+  cek("peringatan berulang tidak menumpuk duplikat", p.teksBicara().length === 1, p.teksBicara());
 }
 
 console.log("aturan zanite: " + (total - gagal) + "/" + total + " lulus");

@@ -6,7 +6,7 @@
 //  - jenisPerintah(): "jelaskan sekitar" (mengandung sekitar/jelas) atau pertanyaan bebas.
 //  - ambilPerintah(): teks transkrip -> teks perintah tanpa kata bangun (null = hanya kata bangun / kosong).
 //  - buatPelacakBicara(): kapan app sedang bicara (+ 500 ms sesudahnya) dan teks ucapan yang baru/sedang berbunyi.
-//  - gemaApp(): apakah transkrip yang datang saat app bicara adalah gema ucapan app sendiri (dibuang) atau suara pengguna.
+//  - sisaSetelahGema(): membuang gema ucapan app dari AWAL transkrip; yang tersisa dianggap suara pengguna.
 //  - buatJendela(): jendela perintah 6 detik dan kapan perintah dianggap selesai diucapkan.
 (function (root) {
   const ZC = typeof module !== "undefined" && module.exports ? require("./zanite-cocok.js") : root.ZaniteCocok;
@@ -58,28 +58,68 @@
       const sisa = c.rest ? c.rest.split(" ").length : 0;
       const awal = tok.length - sisa - c.v.split(" ").length;
       const depan = tok.slice(0, awal);
+      c.rest = ZC.buangUlangan(tok.slice(tok.length - sisa), DAFTAR, true, SENDIRI_SAJA).join(" ");   // "Janet Janet ..."
       if (!c.rest) return depan.join(" ") || null;                 // kata bangun di ujung kalimat
       if (awal <= SAPAAN_MAKS && depan.every((w) => ZC.SAPAAN.has(w))) return c.rest;   // di awal, setelah sapaan
     }
     return mentah;
   }
 
-  // ---- penyaring gema. Transkrip yang datang saat app bicara TIDAK dibuang begitu saja (mic HP hampir tidak
-  // mendengar app, jadi yang datang hampir pasti suara pengguna). Dibuang hanya bila mirip teks ucapan app sendiri:
-  //  - >= 60% kata transkrip muncul di teks SATU ucapan app (yang sedang berbunyi atau baru selesai < 1,5 dtk);
-  //  - transkrip 1 kata: dibuang hanya bila kata itu ada di teks ucapan app.
-  const GEMA_PERSEN = 0.6;
-  function gemaApp(transkrip, teksApp) {
-    const kata = token(transkrip);
-    if (!kata.length) return false;
-    for (const t of teksApp || []) {
-      const ada = new Set(token(t));
-      if (!ada.size) continue;
-      if (kata.length === 1) { if (ada.has(kata[0])) return true; continue; }
-      let cocok = 0;
-      for (const k of kata) if (ada.has(k)) cocok += 1;
-      if (cocok / kata.length >= GEMA_PERSEN) return true;
+  // ---- penyaring gema. Chrome menggabung ucapan app dan ucapan pengguna ke SATU hasil yang terus tumbuh, jadi
+  // gema tidak bisa dinilai per transkrip utuh. Gema dibuang kata demi kata dari AWAL transkrip selama bisa dijelaskan
+  // oleh teks ucapan app yang baru-baru ini berbunyi; sisanya (suara pengguna) yang diteruskan. Kata sesudah suara
+  // pengguna tidak pernah disentuh.
+  //  - satu potongan = kata berurutan di dalam SATU teks app; potongan boleh sambung-menyambung;
+  //  - potongan pertama boleh mulai di tengah kalimat (mic mulai mendengar di tengah); potongan berikutnya harus
+  //    mulai di awal sebuah kalimat app, atau panjangnya >= 2 kata (satu kata yang kebetulan sama tidak ikut dimakan);
+  //  - kata terpotong (>= 3 huruf, awalan kata app di posisi itu: "kendara", "terha") ikut dihitung;
+  //  - kata bangun SENDIRIAN (potongan 1 kata) hanya dianggap gema selama kalimat yang memuatnya masih berbunyi.
+  //    Tanpa ini "Maaf, ... Panggil Zanite lagi." membuat "Zanite" dari pengguna dibuang selama 60 detik.
+  const AWALAN_MIN = 3;
+  const LOMPAT_MIN = 2;
+
+  const samaKata = (kata, app) => app !== undefined && (kata === app || (kata.length >= AWALAN_MIN && app.startsWith(kata)));
+  const adalahVarian = (kata) => { const k = ZC.klasifikasi(kata, DAFTAR, true, SENDIRI_SAJA); return !!k && k.tipe === "sendiri"; };
+
+  // Kata ternormalisasi + posisinya di teks asli, supaya sisanya dikembalikan dengan huruf dan tanda baca asli.
+  function pecah(teks) {
+    const out = [];
+    for (const m of String(teks).matchAll(/[\p{L}\p{M}\p{N}]+/gu)) for (const k of token(m[0])) out.push({ k, i: m.index });
+    return out;
+  }
+
+  // teksApp: ucapan app 60 detik terakhir. teksSedang: yang masih berbunyi (termasuk ekor). Hasil: sisa transkrip
+  // ("" = seluruhnya gema; teks asli tanpa perubahan bila tidak ada yang dibuang).
+  function sisaSetelahGema(transkrip, teksApp, teksSedang) {
+    const asli = String(transkrip || "");
+    const kata = pecah(asli);
+    const sedang = new Set(teksSedang || []);
+    const app = (teksApp || []).map((t) => ({ w: token(t), sedang: sedang.has(t) })).filter((a) => a.w.length);
+    const bisa = new Array(kata.length + 1).fill(false);   // bisa[n]: n kata pertama dapat dijelaskan sebagai gema
+    bisa[0] = true;
+    let habis = 0;
+    for (let i = 0; i < kata.length; i++) {
+      if (!bisa[i]) continue;
+      for (const a of app) {
+        for (let s = 0; s < a.w.length; s++) {
+          for (let l = 1; i + l <= kata.length && samaKata(kata[i + l - 1].k, a.w[s + l - 1]); l++) {
+            if (i > 0 && s > 0 && l < LOMPAT_MIN) continue;
+            if (l === 1 && !a.sedang && adalahVarian(kata[i].k)) continue;
+            bisa[i + l] = true;
+            habis = Math.max(habis, i + l);
+          }
+        }
+      }
     }
+    if (!habis) return asli;
+    return habis >= kata.length ? "" : asli.slice(kata[habis].i).trim();
+  }
+
+  // true bila teks (>= min kata) seluruhnya potongan berurutan dari kalimat app itu.
+  function potonganDari(teks, kalimat, min) {
+    const a = token(teks), b = token(kalimat);
+    if (a.length < min) return false;
+    for (let s = 0; s + a.length <= b.length; s++) if (a.every((w, i) => samaKata(w, b[s + i]))) return true;
     return false;
   }
 
@@ -90,11 +130,11 @@
   // (bisa macet true di Chrome Android -> Zanite tuli). Satu ucapan dihitung "bicara" selama tercatat DAN
   // (sintesis speaking/pending ATAU baru mulai < mulaiMs lalu). Bila sintesis sudah tidak speaking/pending
   // selama paksaMs tetapi onend tidak datang, ucapan itu diakhiri paksa ("selesai-paksa").
-  // opsi: mulaiMs (1500), paksaMs (1000), gemaMs (1500: teks ucapan yang baru selesai masih dihitung untuk
+  // opsi: mulaiMs (1500), paksaMs (1000), gemaMs (60000: teks ucapan yang sudah selesai masih dihitung untuk
   // penyaring gema), catat(teks) untuk log.
   function buatPelacakBicara(jam, tailMs, opsi) {
     const tail = tailMs == null ? 500 : tailMs;
-    const o = Object.assign({ mulaiMs: 1500, paksaMs: 1000, gemaMs: 1500, catat: null }, opsi || {});
+    const o = Object.assign({ mulaiMs: 1500, paksaMs: 1000, gemaMs: 60000, catat: null }, opsi || {});
     const aktif = new Map();   // id -> { mati (batas pengaman), tMulai, tAktif (terakhir sintesis terlihat aktif), sintesis }
     let n = 0, akhir = -Infinity, terakhirBicara = -Infinity, paksa = 0, dibatalkan = 0;
     const baruSelesai = [];    // { teks, t }: ucapan yang baru berakhir (untuk penyaring gema)
@@ -163,20 +203,28 @@
       jumlah: () => aktif.size,
       // peringatan tingkat 3 yang masih tercatat berbunyi: tidak boleh dipotong oleh kata bangun
       adaTingkat3: () => { for (const e of aktif.values()) if (e.tingkat === 3) return true; return false; },
-      // teks ucapan yang sedang berbunyi + yang selesai < gemaMs lalu (bahan penyaring gema)
+      // teks ucapan yang sedang berbunyi + yang selesai < gemaMs lalu (bahan penyaring gema), tanpa duplikat
       teksBicara() {
-        const t = jam(), out = [];
-        for (const e of aktif.values()) if (e.teks) out.push(e.teks);
+        const t = jam(), out = new Set();
+        for (const e of aktif.values()) if (e.teks) out.add(e.teks);
         for (let i = baruSelesai.length - 1; i >= 0; i--) if (t - baruSelesai[i].t >= o.gemaMs) baruSelesai.splice(i, 1);
-        for (const b of baruSelesai) out.push(b.teks);
-        return out;
+        for (const b of baruSelesai) out.add(b.teks);
+        return [...out];
+      },
+      // teks yang masih berbunyi: ucapan tercatat + yang selesai di dalam ekor tailMs
+      teksSedang() {
+        const t = jam(), out = new Set();
+        for (const e of aktif.values()) if (e.teks) out.add(e.teks);
+        for (const b of baruSelesai) if (t - b.t < tail) out.add(b.teks);
+        return [...out];
       },
       statistik: () => ({ paksa, dibatalkan }),
     };
   }
 
   // ---- jendela perintah. Tanpa timer: pemanggil menjadwalkan jatuhTempo() lalu memanggil periksa().
-  // opsi: t (waktu buka), bukaMs (6000), diamTanyaMs, diamJelaskanMs, setelahFinalMs, maksBicaraMs
+  // opsi: t (waktu buka), bukaMs (6000), diamTanyaMs, diamJelaskanMs, setelahFinalMs, maksBicaraMs,
+  // gema(cmd) -> true bila "perintah" itu hanya gema balasan app (diabaikan)
   function buatJendela(opsi) {
     const o = Object.assign({ t: 0, bukaMs: 6000, diamTanyaMs: 1200, diamJelaskanMs: 700, setelahFinalMs: 200, maksBicaraMs: 10000, inline: false }, opsi || {});
     const entri = new Map();   // kunci hasil Chrome -> { cmd, final }
@@ -189,11 +237,12 @@
       inline: o.inline,
       terima(t, key, teks, final) {
         if (S.selesai) return;
-        const cmd = ambilPerintah(teks);
+        let cmd = ambilPerintah(teks);
+        if (cmd !== null && o.gema && o.gema(cmd)) cmd = null;
         if (cmd === null) { entri.delete(key); }   // hanya kata bangun: bukan perintah
         else entri.set(key, { cmd, final: !!final });
         const baru = gabung();
-        if (!baru) { S.cmd = ""; return; }
+        if (!baru) { S.cmd = ""; S.pertama = null; S.ubah = null; return; }   // ditarik kembali: jangan kirim kosong
         if (S.pertama === null) S.pertama = t;
         if (baru !== S.cmd) S.ubah = t;
         S.cmd = baru;
@@ -240,7 +289,7 @@
     return out.join("\n");
   }
 
-  const api = { KATA_SOPAN, siapkanKataSopan, ubahJadi, jenisPerintah, ambilPerintah, buatPelacakBicara, gemaApp, buatJendela, susunLaporan };
+  const api = { KATA_SOPAN, siapkanKataSopan, ubahJadi, jenisPerintah, ambilPerintah, buatPelacakBicara, sisaSetelahGema, potonganDari, buatJendela, susunLaporan };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ZaniteAturan = api;
 })(typeof window !== "undefined" ? window : globalThis);

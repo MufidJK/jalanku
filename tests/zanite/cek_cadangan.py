@@ -3,7 +3,7 @@ seperti cek_langsung.py. Gemini sungguhan: 12 panggilan per model, jeda >= 4,5 d
 
     venv\\Scripts\\python -I tests\\zanite\\cek_cadangan.py
 
-- Daftar model dibaca dari config.yaml (zanite.model, lalu zanite.model_cadangan). Tiap model dijalankan lewat
+- Daftar model dibaca dari config.yaml (zanite.rantai). Tiap model dijalankan lewat
   cek_langsung.utama(model_paksa=...): jalur server asli, satu model, tanpa model cadangan, batas_waktu_s dari config.
 - Aturan 5 (median latensi <= 3,0 dtk) hanya berlaku untuk model utama; untuk model cadangan latensi hanya dilaporkan.
 - Hanya data/zanite/tes_bersih.jpg dan tes_banner.jpg yang dikirim. Kunci dibaca dari .env dan tidak pernah dicetak/ditulis.
@@ -21,7 +21,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import cek_langsung as cl  # noqa: E402
-from dotenv import dotenv_values  # noqa: E402
 
 KELUAR = cl.ROOT / "data" / "zanite" / "hasil_cadangan.md"
 WAJIB = (1, 2, 6, 7)          # gagal salah satu = model cadangan dikeluarkan dari config.yaml
@@ -34,11 +33,12 @@ def gagal_penyedia(hasil):
 
 async def jalankan(daftar):
     semua = []
-    for i, model in enumerate(daftar):
+    for i, entri in enumerate(daftar):
         if i:
             await asyncio.sleep(cl.JEDA_S)
+        model = entri.model
         print(f"\n===== {model} ({'utama' if i == 0 else 'cadangan'}) =====", flush=True)
-        z, hasil = await cl.utama(model_paksa=model)
+        z, hasil = await cl.utama(model_paksa=tuple(entri))
         r, rincian, med = cl.nilai(hasil)
         semua.append(dict(model=model, utama=i == 0, z=z, hasil=hasil, r=r, rincian=rincian, med=med))
     return semua
@@ -91,15 +91,12 @@ def tulis(semua):
 
 
 def main():
-    kunci = dotenv_values(cl.ROOT / ".env").get("GEMINI_API_KEY") or ""
     import yaml
     konfig = yaml.safe_load((cl.ROOT / "src" / "server" / "config.yaml").read_text(encoding="utf-8")) or {}
-    z = konfig.get("zanite") or {}
-    daftar = [str(z.get("model", "gemini-3.1-flash-lite"))] + [str(x) for x in (z.get("model_cadangan") or [])]
+    daftar = cl.zn.Pengaturan(konfig.get("zanite")).rantai
     semua = asyncio.run(jalankan(daftar))
     teks = tulis(semua)
-    if kunci and kunci in teks:
-        sys.exit("Laporan memuat kunci; tidak ditulis.")
+    cl.pastikan_tanpa_kunci(teks)
     KELUAR.write_text(teks, encoding="utf-8")
     print(f"\nTersimpan: {KELUAR.relative_to(cl.ROOT)}")
     for m in semua:

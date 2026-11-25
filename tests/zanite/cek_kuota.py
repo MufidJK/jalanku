@@ -2,7 +2,7 @@
 
     venv\\Scripts\\python -I tests\\zanite\\cek_kuota.py
 
-- Model sama dengan server (config.yaml: zanite.model). Batas waktu 30 dtk. Ulang oleh SDK dimatikan (attempts=1),
+- Model sama dengan server (config.yaml: entri gemini pertama di zanite.rantai). Batas waktu 30 dtk. Ulang oleh SDK dimatikan (attempts=1),
   jadi galat 429/503 muncul seketika dengan kode dan statusnya.
 - Hanya data/zanite/tes_bersih.jpg yang dikirim (tanpa wajah).
 - Yang dicetak: waktu (ms), berhasil atau kelas galat + kode HTTP + status/alasan dari Google (mis. RESOURCE_EXHAUSTED,
@@ -27,7 +27,7 @@ KUNCI = os.environ.pop("GEMINI_API_KEY", "").strip()
 if not KUNCI:
     sys.exit("GEMINI_API_KEY tidak ada di .env")
 config = yaml.safe_load(open(ROOT / "src" / "server" / "config.yaml", encoding="utf-8"))
-MODEL = str((config.get("zanite") or {}).get("model", "gemini-3.1-flash-lite"))
+MODEL = next((str(e["model"]) for e in (config.get("zanite") or {}).get("rantai") or [] if e.get("penyedia") == "gemini"), "gemini-3.1-flash-lite")
 GAMBAR = ROOT / "data" / "zanite" / "tes_bersih.jpg"
 BATAS_MS = 30000
 

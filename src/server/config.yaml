@@ -103,17 +103,22 @@ samping_masuk_tengah_min: 0.15   # ... kecuali kotaknya masuk zona tengah >= bag
 
 # --- Zanite (asisten suara, Tahap 6) ---
 # Semua kunci boleh dihapus: server memakai nilai bawaan yang sama dengan di bawah.
-# Kunci API TIDAK di sini: GEMINI_API_KEY ada di .env. aktif: false = Zanite mati, bagian server lain tidak berubah.
+# Kunci API TIDAK di sini: GEMINI_API_KEY dan GROQ_API_KEY ada di .env (keduanya tier gratis). aktif: false = Zanite
+# mati, bagian server lain tidak berubah.
 zanite:
   aktif: true
-  penyedia: gemini
-  model: gemini-3.1-flash-lite
-  # Model cadangan dicoba berurutan bila model utama habis waktu, padat (429/503) atau galat server (500/504).
-  # 400 dan hasil penjaga (klaim-aman, bocor) tidak pernah berpindah model.
-  model_cadangan: [gemini-3.5-flash-lite]   # gemini-2.5-flash dikeluarkan: 404 di 12 dari 12 panggilan (data/zanite/hasil_cadangan.md)
-  batas_model_utama_s: 4      # model utama paling lama sekian dtk; sisanya untuk cadangan
-  batas_waktu_s: 9            # anggaran TOTAL semua model (klien HP menunggu 10 dtk)
-  lewati_utama_setelah_gagal: 2   # model utama gagal (waktu habis/429/5xx) sekian kali berturut-turut -> dilewati
+  # Rantai model, dicoba berurutan. Pindah ke entri berikutnya bila: batas waktu, 429, 5xx, atau jaringan putus.
+  # 400/401/403/404 dan hasil penjaga (klaim-aman, bocor, json) tidak pernah berpindah. penyedia: gemini | groq.
+  # Entri yang kuncinya tidak ada di .env dilewati.
+  # Urutan dari data/zanite/hasil_groq.md (26 Nov, 02:06-02:13 WIB). KETIGA model "tidak konklusif" (waktu habis saat
+  # unggahan laptop sangat lambat), jadi urutan ini belum membuktikan apa pun tentang model: ulangi cek saat jaringan baik.
+  rantai:
+    - {penyedia: gemini, model: gemini-3.5-flash-lite}
+    - {penyedia: groq, model: qwen/qwen3.8-27b}
+    - {penyedia: gemini, model: gemini-3.1-flash-lite}
+  batas_model_utama_s: 4      # tiap entri yang masih punya penerus paling lama sekian dtk; entri terakhir memakai sisanya
+  batas_waktu_s: 9            # anggaran TOTAL semua entri (klien HP menunggu 10 dtk)
+  lewati_utama_setelah_gagal: 2   # per entri: gagal (waktu habis/429/5xx) sekian kali berturut-turut -> dilewati
   lama_lewati_utama_s: 300        # selama sekian detik; sesudahnya dicoba lagi, satu keberhasilan mereset hitungan
   per_menit_per_klien: 4      # per IP klien
   per_menit_global: 10        # semua klien (tier gratis pernah 429 setelah sekitar 20 per menit)

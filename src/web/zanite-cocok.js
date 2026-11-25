@@ -2,7 +2,7 @@
 //
 // Lapis 1, cari(): mendeteksi VARIAN di mana pun dalam kalimat (daftar eksplisit + aturan fuzzy + pasangan).
 // Lapis 2, klasifikasi(): aturan BERDIRI SENDIRI (kalibrasi 3). Wake hanya boleh menyala bila:
-//   a) transkrip hanya berisi varian (tipe "sendiri"), atau
+//   a) transkrip hanya berisi varian (tipe "sendiri"; varian yang diulang, "Janet Janet", dihitung satu), atau
 //   b) varian langsung diikuti frasa perintah: jelaskan / jelasin / sekitar (boleh sela "dong", "ya", "deh")
 //      (tipe "perintah"; kata setelah frasa perintah boleh ada, ikut jadi teks perintah).
 //   Sebelum varian boleh ada sapaan pendek (maks 2 kata dari: eh hei hai halo oi woi oke ok ya nah tolong).
@@ -66,6 +66,13 @@
     return L ? { v: L.v, how: L.how, rest: tok.slice(L.i + L.len).join(" ") } : null;
   }
 
+  // Varian yang diulang di awal token ("Janet Janet") dibuang: pengulangan dihitung satu panggilan.
+  function buangUlangan(tok, daftar, fuzzyAktif, sendiriSaja) {
+    let sisa = tok, U;
+    while (sisa.length && (U = lokasi(sisa, daftar, fuzzyAktif, sendiriSaja)) && U.i === 0) sisa = sisa.slice(U.len);
+    return sisa;
+  }
+
   // Lapis 2: aturan berdiri sendiri. null = tidak ada varian.
   function klasifikasi(raw, daftar, fuzzyAktif, sendiriSaja) {
     const tok = norm(raw).split(" ").filter(Boolean);
@@ -74,7 +81,7 @@
     const dasar = { v: L.v, how: L.how, teks: raw };
     // sapaan pendek (maks 2 kata dari SAPAAN) sebelum varian boleh; kata lain sebelum varian = ditolak
     if (L.i > SAPAAN_MAKS || !tok.slice(0, L.i).every((w) => SAPAAN.has(w))) return Object.assign(dasar, { tipe: "ditolak", alasan: "ada kata lain" });
-    const rest = tok.slice(L.i + L.len);
+    const rest = buangUlangan(tok.slice(L.i + L.len), daftar, fuzzyAktif, sendiriSaja);
     if (!rest.length) return Object.assign(dasar, { tipe: "sendiri" });
     let k = 0;
     while (k < rest.length && FILLER.has(rest[k])) k++;
@@ -144,7 +151,7 @@
     return { masuk, tick, nextDue: () => (S.armed ? S.armed.at : null), utts: S.utts, selesai: () => tick(Infinity) };
   }
 
-  const api = { DAFTAR_AWAL, SENDIRI_SAJA_AWAL, FUZZY, FILLER, KATA_PERINTAH, SAPAAN, VARIAN_LEMAH, norm, parseDaftar, cari, klasifikasi, buatPemicu };
+  const api = { DAFTAR_AWAL, SENDIRI_SAJA_AWAL, FUZZY, FILLER, KATA_PERINTAH, SAPAAN, VARIAN_LEMAH, norm, parseDaftar, cari, klasifikasi, buangUlangan, buatPemicu };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ZaniteCocok = api;
 })(typeof window !== "undefined" ? window : globalThis);

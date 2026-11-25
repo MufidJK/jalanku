@@ -87,11 +87,16 @@ class Jam:
         self.t += detik
 
 
+def rt(*model, penyedia="gemini"):
+    """Rantai model untuk config: rt("a", "b")."""
+    return [{"penyedia": penyedia, "model": m} for m in model]
+
+
 def pengaturan(**ubah):
-    """Pengaturan dari config.yaml asli, lalu ditimpa. Tanpa model cadangan kecuali diminta (tes lama menghitung
-    panggilan ke SATU model); rantai model dites di tes_model_cadangan_*."""
+    """Pengaturan dari config.yaml asli, lalu ditimpa. Rantai satu model kecuali diminta (tes lama menghitung
+    panggilan ke SATU model); rantai model dites di tes_model_cadangan_* dan tes_groq_*."""
     isi = dict(CONFIG["zanite"])
-    isi["model_cadangan"] = []
+    isi["rantai"] = rt(M0)
     isi.update(ubah)
     return Z.Pengaturan(isi)
 
@@ -231,18 +236,21 @@ async def tes_mati_dan_tanpa_kunci():
 
     # penyedia tidak dikenal -> mati, bukan galat
     with tempfile.TemporaryDirectory() as tmp:
-        z = Z.buat_zanite({"zanite": {"penyedia": "lainnya"}}, tmp)
+        z = Z.buat_zanite({"zanite": {"rantai": [{"penyedia": "lainnya", "model": "x"}]}}, tmp)
         cek(not z.siap, "penyedia tidak dikenal: harus mati")
 
 
 async def tes_kunci_dari_env_dan_status_aktif():
     with tempfile.TemporaryDirectory() as tmp:
-        (Path(tmp) / ".env").write_text(f"GEMINI_API_KEY={KUNCI_PALSU}\n", encoding="utf-8")
+        (Path(tmp) / ".env").write_text(f"GEMINI_API_KEY={KUNCI_PALSU}\nGROQ_API_KEY={KUNCI_PALSU}-groq\n", encoding="utf-8")
         os.environ.pop("GEMINI_API_KEY", None)
-        z = Z.buat_zanite(CONFIG, tmp)
-        cek(z.siap and isinstance(z.penyedia, Z.PenyediaGemini), "env: Zanite seharusnya aktif")
-        cek("GEMINI_API_KEY" not in os.environ, "env: kunci masih ada di os.environ")
-        cek(KUNCI_PALSU not in repr(z.penyedia) and KUNCI_PALSU not in str(z.penyedia), "env: kunci muncul di repr penyedia")
+        os.environ.pop("GROQ_API_KEY", None)
+        z = Z.buat_zanite({"zanite": {"rantai": rt("qwen/qwen3.8-27b", penyedia="groq") + rt(M0, M1)}}, tmp)
+        cek(z.siap and isinstance(z.penyedia["gemini"], Z.PenyediaGemini) and isinstance(z.penyedia["groq"], Z.PenyediaGroq), "env: Zanite seharusnya aktif")
+        cek("GEMINI_API_KEY" not in os.environ and "GROQ_API_KEY" not in os.environ, "env: kunci masih ada di os.environ")
+        teks = repr(z.penyedia) + str(z.penyedia) + str(vars(z)) + LOG.semua()
+        cek(KUNCI_PALSU not in teks, "env: kunci muncul di repr penyedia / vars / log")
+        cek(z.dir_log_hp == Path(tmp) / "data" / "zanite" / "log-hp", f"env: folder log HP {z.dir_log_hp}")
         main.app.state.zanite = z
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://testserver") as k:
             s = await k.get("/api/status")
@@ -578,7 +586,7 @@ def tes_kelas_sinkron_config():
     cek("zanite" not in ekspor_config_web.config_web(CONFIG), "zanite ikut terekspor ke JS")
     p = Z.Pengaturan(CONFIG["zanite"])
     b = Z.Pengaturan(None)
-    cek(all(getattr(p, a) == getattr(b, a) for a in vars(p) if a != "model_cadangan"), "nilai bawaan kode tidak sama dengan config.yaml")
+    cek(all(getattr(p, a) == getattr(b, a) for a in vars(p) if a != "rantai"), "nilai bawaan kode tidak sama dengan config.yaml")
 
 
 def tes_pembersih_ucapan():
@@ -762,7 +770,7 @@ OKJ = '{"jawaban": "Di kiri ada pilar, jaraknya sedang."}'
 
 def dunia_model(peta, **ub):
     """Dunia dengan rantai model utama + dua cadangan; tiap model punya perilaku sendiri (PenyediaPerModel)."""
-    dasar = dict(model_cadangan=CAD, per_menit_per_klien=100, per_menit_global=100, per_hari_global=1000)
+    dasar = dict(rantai=rt(M0, *CAD), per_menit_per_klien=100, per_menit_global=100, per_hari_global=1000)
     dasar.update(ub)
     return Dunia(PenyediaPerModel(peta), **dasar)
 
@@ -818,13 +826,13 @@ async def tes_model_cadangan_macet_dan_anggaran():
     cek(j["jenis"] == "cadangan" and j["alasan"] == "waktu-habis" and d.p.urutan == [M0, M1, M2], f"terakhir habis waktu: {j} {d.p.urutan}")
     cek(0.9 <= dt < 1.5, f"terakhir habis waktu: {dt:.2f} dtk (anggaran 1,0)")
 
-    # anggaran total dihormati ketika SEMUA menggantung: utama 0,3, cadangan pertama mendapat SISA (0,9), kedua dilewati (sisa 0 < minimal)
+    # anggaran total dihormati ketika SEMUA menggantung: entri 1 dan 2 dibatasi 0,3, entri terakhir mendapat SISA (0,6)
     d = dunia_model({M0: PenyediaPalsu(tidur=5), M1: PenyediaPalsu(tidur=5), M2: PenyediaPalsu(tidur=5)},
                     batas_waktu_s=1.2, batas_model_utama_s=0.3, sisa_min_cadangan_s=0.5)
     j, dt = await satu(d)
-    cek(j["alasan"] == "waktu-habis" and d.p.urutan == [M0, M1], f"anggaran: {j} {d.p.urutan}")
+    cek(j["alasan"] == "waktu-habis" and d.p.urutan == [M0, M1, M2] and d.p.ulang == [False, False, True], f"anggaran: {j} {d.p.urutan}")
     cek(1.1 <= dt < 1.7, f"anggaran total: {dt:.2f} dtk (batas 1,2 + sedikit)")
-    cek(f"coba={M0}:waktu-habis,{M1}:waktu-habis" in LOG.semua(), f"anggaran: log {LOG.semua()!r}")
+    cek(f"coba={M0}:waktu-habis,{M1}:waktu-habis,{M2}:waktu-habis" in LOG.semua(), f"anggaran: log {LOG.semua()!r}")
 
     # model cadangan dilewati bila sisa < minimal
     d = dunia_model({M0: PenyediaPalsu(tidur=5), M1: PenyediaPalsu(OKJ), M2: PenyediaPalsu(OKJ)},
@@ -839,7 +847,7 @@ async def tes_model_cadangan_macet_dan_anggaran():
     cek(j["model"] == M1 and d.p.urutan == [M0, M1], f"sisa cukup: {j} {d.p.urutan}")
 
     # tanpa model cadangan: model utama memakai SELURUH anggaran (tidak dipotong batas_model_utama_s)
-    d = dunia_model({M0: PenyediaPalsu(OKJ, tidur=0.5)}, model_cadangan=[], batas_waktu_s=1.5, batas_model_utama_s=0.2)
+    d = dunia_model({M0: PenyediaPalsu(OKJ, tidur=0.5)}, rantai=rt(M0), batas_waktu_s=1.5, batas_model_utama_s=0.2)
     j, dt = await satu(d)
     cek(j["model"] == M0 and j["jenis"] == "jawaban" and d.p.ulang == [True], f"tanpa cadangan: {j} {d.p.ulang}")
 
@@ -870,15 +878,19 @@ async def tes_model_cadangan_tidak_berpindah():
 
 
 def tes_model_cadangan_pengaturan():
-    cek(CONFIG["zanite"].get("model_cadangan") == [M1] and CONFIG["zanite"].get("batas_model_utama_s") == 4 and CONFIG["zanite"].get("batas_waktu_s") == 9,
-        f"config.yaml: {CONFIG['zanite']}")
-    p = Z.Pengaturan(CONFIG["zanite"])
-    cek(p.model == M0 and p.model_cadangan == [M1] and p.batas_model_utama_s == 4.0 and p.batas_waktu_s == 9.0, "Pengaturan dari config.yaml")
-    cek(Z.Pengaturan(None).model_cadangan == [], "tanpa kunci: tidak ada cadangan")
-    cek(Z.Pengaturan({"model_cadangan": "model-a"}).model_cadangan == ["model-a"], "satu teks jadi daftar")
-    cek(Z.Pengaturan({"model_cadangan": [M0, "a", "a", "b c", "../x", "", None, 5, "d", "e", "f"]}).model_cadangan == ["a", "d", "e"],
-        f"saringan daftar: {Z.Pengaturan({'model_cadangan': [M0, 'a', 'a', 'b c', '../x', '', None, 5, 'd', 'e', 'f']}).model_cadangan}")
-    cek(Z.Pengaturan({"model_cadangan": 12}).model_cadangan == [] and Z.Pengaturan({"model_cadangan": {"a": 1}}).model_cadangan == [], "bentuk rusak: kosong")
+    z = CONFIG["zanite"]
+    cek("model" not in z and "model_cadangan" not in z and "penyedia" not in z, f"config.yaml: kunci lama masih ada {sorted(z)}")
+    p = Z.Pengaturan(z)
+    cek(1 <= len(p.rantai) == len(z["rantai"]) and p.batas_model_utama_s == 4.0 and p.batas_waktu_s == 9.0, f"config.yaml: rantai {p.rantai}")
+    cek(Z.Pengaturan(None).rantai == [Z.Entri("gemini", M0)] and Z.Pengaturan(None).model == M0, "tanpa kunci rantai: bawaan")
+    r = Z.Pengaturan({"rantai": [{"penyedia": "Groq", "model": "qwen/qwen3.8-27b"}, {"penyedia": "gemini", "model": M1},
+                                 {"penyedia": "gemini", "model": M1}, {"penyedia": "lain", "model": "x"}, {"penyedia": "gemini", "model": "../x"},
+                                 {"penyedia": "gemini", "model": "a b"}, {"penyedia": "gemini", "model": "a/b/c"}, {"penyedia": "gemini", "model": "a/.."},
+                                 "bukan-dict", {"penyedia": "gemini"}, {"penyedia": "groq", "model": M1}]}).rantai
+    cek(r == [Z.Entri("groq", "qwen/qwen3.8-27b"), Z.Entri("gemini", M1), Z.Entri("groq", M1)], f"saringan rantai: {r}")
+    cek(len(Z.Pengaturan({"rantai": rt(*"abcdefg")}).rantai) == Z.MAKS_RANTAI, "rantai dibatasi")
+    for rusak in ([], "x", 5, {"a": 1}, None):
+        cek(Z.Pengaturan({"rantai": rusak}).rantai == [] and not Z.Zanite(PenyediaPalsu(), Z.Pengaturan({"rantai": rusak})).siap, f"rantai rusak {rusak!r}: Zanite mati")
     cek(Z.Pengaturan({"batas_model_utama_s": "x"}).batas_model_utama_s == 4.0, "batas_model_utama_s rusak: bawaan")
 
 
@@ -963,19 +975,19 @@ async def tes_model_cadangan_sdk_asli():
         return Z.PenyediaGemini(KUNCI_PALSU, M0, client=klien), permintaan
 
     pg, permintaan = buat({M0: 503, M1: 200, M2: 200})
-    d = Dunia(pg, model_cadangan=CAD, per_menit_per_klien=100, per_menit_global=100)
+    d = Dunia(pg, rantai=rt(M0, *CAD), per_menit_per_klien=100, per_menit_global=100)
     j, dt = await satu(d, "sdk1")
     cek(j["model"] == M1 and j["jenis"] == "jawaban" and permintaan == [M0, M1], f"sdk asli: {j} {permintaan}")
     cek(f"model={M1}" in LOG.semua(), "sdk asli: model di log")
 
     pg, permintaan = buat({M0: 503, M1: 503, M2: 429})
-    d = Dunia(pg, model_cadangan=CAD, per_menit_per_klien=100, per_menit_global=100)
+    d = Dunia(pg, rantai=rt(M0, *CAD), per_menit_per_klien=100, per_menit_global=100)
     j, dt = await satu(d, "sdk2")
     cek(permintaan == [M0, M1, M2, M2], f"sdk asli semua gagal: {permintaan}")
     cek(j["jenis"] == "cadangan" and j["alasan"] == "penyedia-ClientError-429" and dt < 3, f"sdk asli semua gagal: {j} {dt:.1f}")
 
     pg, permintaan = buat({M0: 400, M1: 200, M2: 200})
-    d = Dunia(pg, model_cadangan=CAD, per_menit_per_klien=100, per_menit_global=100)
+    d = Dunia(pg, rantai=rt(M0, *CAD), per_menit_per_klien=100, per_menit_global=100)
     j, dt = await satu(d, "sdk3")
     cek(permintaan == [M0] and j["alasan"] == "penyedia-ClientError-400", f"sdk asli 400: {j} {permintaan}")
 
@@ -1000,6 +1012,9 @@ class Urut(Z.Penyedia):
 G503 = GalatApi(503, "padat")
 
 
+E0 = ("gemini", M0)
+
+
 async def tes_pemutus_sirkuit_model_utama():
     async def tanya_lagi(d, sesi):
         LOG.teks.clear()
@@ -1009,7 +1024,7 @@ async def tes_pemutus_sirkuit_model_utama():
 
     def baru(utama, cad, **ub):
         jam = Jam()
-        d = dunia_model({M0: utama, M1: cad, M2: PenyediaPalsu(OKJ)}, model_cadangan=[M1], jam=jam, **ub)
+        d = dunia_model({M0: utama, M1: cad, M2: PenyediaPalsu(OKJ)}, rantai=rt(M0, M1), jam=jam, **ub)
         return d, jam
 
     # 2 kegagalan berturut-turut -> model utama dilewati; cadangan menjawab langsung
@@ -1020,24 +1035,24 @@ async def tes_pemutus_sirkuit_model_utama():
     cek(utama.n == 2 and cad.n == 2 and j1["model"] == M1 and j2["model"] == M1, f"dua gagal: utama {utama.n} cad {cad.n}")
     j3, log = await tanya_lagi(d, "p3")
     cek(utama.n == 2 and cad.n == 3 and j3["model"] == M1 and j3["jenis"] == "jawaban", f"dilewati: utama {utama.n} cad {cad.n} {j3}")
-    cek(f"coba=utama dilewati (sisa 300 s),{M1}:ok" in log, f"dilewati: log {log!r}")
+    cek(f"coba={M0} dilewati (sisa 300 s),{M1}:ok" in log, f"dilewati: log {log!r}")
     cek(d.p.ulang[-1] is True, "dilewati: cadangan pertama (terakhir di rantai) boleh ulang")
     jam.maju(100)
     j4, log = await tanya_lagi(d, "p4")
-    cek(utama.n == 2 and "utama dilewati (sisa 200 s)" in log, f"sisa berkurang menurut jam: utama {utama.n} {log!r}")
+    cek(utama.n == 2 and f"{M0} dilewati (sisa 200 s)" in log, f"sisa berkurang menurut jam: utama {utama.n} {log!r}")
 
     # keberhasilan model CADANGAN tidak mereset hitungan model utama (sudah terlihat di atas: 2 gagal + 2 sukses cadangan = dilewati)
     utama, cad = Urut(G503, OKJ), Urut(OKJ)
     d, jam = baru(utama, cad)
     await tanya_lagi(d, "q1")                      # utama gagal (1), cadangan sukses
     await tanya_lagi(d, "q2")                      # utama sukses -> reset
-    cek(d.z._gagal_utama == 0, f"sukses utama mereset: {d.z._gagal_utama}")
+    cek(d.z._gagal.get(E0, 0) == 0, f"sukses utama mereset: {d.z._gagal.get(E0, 0)}")
     utama, cad = Urut(G503), Urut(OKJ)
     d, jam = baru(utama, cad)
     await tanya_lagi(d, "r1")
-    cek(d.z._gagal_utama == 1 and cad.n == 1, "satu gagal: hitungan 1")
+    cek(d.z._gagal.get(E0, 0) == 1 and cad.n == 1, "satu gagal: hitungan 1")
     await tanya_lagi(d, "r2")                      # cadangan sukses di antara kegagalan: tidak mereset
-    cek(d.z._gagal_utama == 2 and d.z._sisa_lewati_utama() == 300, f"sukses cadangan tidak mereset: {d.z._gagal_utama}")
+    cek(d.z._gagal.get(E0, 0) == 2 and d.z._sisa_lewati(E0) == 300, f"sukses cadangan tidak mereset: {d.z._gagal.get(E0, 0)}")
 
     # sesudah 300 dtk model utama dicoba lagi; berhasil = hitungan direset dan tidak lagi dilewati
     utama, cad = Urut(G503, G503, OKJ), Urut(OKJ)
@@ -1051,7 +1066,7 @@ async def tes_pemutus_sirkuit_model_utama():
     jam.maju(1)
     j, log = await tanya_lagi(d, "s5")
     cek(utama.n == 3 and j["model"] == M0 and "dilewati" not in log, f"300 dtk: utama dicoba lagi: {utama.n} {j} {log!r}")
-    cek(d.z._gagal_utama == 0 and d.z._lewati_utama_sampai is None, "sukses sesudah masa lewat: hitungan direset")
+    cek(d.z._gagal.get(E0, 0) == 0 and d.z._lewati_sampai.get(E0) is None, "sukses sesudah masa lewat: hitungan direset")
     j, log = await tanya_lagi(d, "s6")
     cek(utama.n == 4 and j["model"] == M0, "sesudah reset: utama terus dipakai")
 
@@ -1063,32 +1078,32 @@ async def tes_pemutus_sirkuit_model_utama():
     await tanya_lagi(d, "t3")
     cek(utama.n == 3, f"dicoba lagi sesudah 300 dtk: {utama.n}")
     await tanya_lagi(d, "t4")
-    cek(utama.n == 3 and d.z._sisa_lewati_utama() == 300, f"gagal lagi: dilewati lagi: {utama.n}")
+    cek(utama.n == 3 and d.z._sisa_lewati(E0) == 300, f"gagal lagi: dilewati lagi: {utama.n}")
 
     # selang-seling gagal/sukses tidak pernah mencapai 2 berturut-turut
     utama, cad = Urut(G503, OKJ, G503, OKJ, G503, OKJ), Urut(OKJ)
     d, jam = baru(utama, cad)
     for n in range(6):
         await tanya_lagi(d, f"u{n}")
-    cek(utama.n == 6 and d.z._sisa_lewati_utama() == 0, f"selang-seling: utama {utama.n}")
+    cek(utama.n == 6 and d.z._sisa_lewati(E0) == 0, f"selang-seling: utama {utama.n}")
 
     # waktu habis juga dihitung
     utama, cad = Urut("TIDUR"), Urut(OKJ)
     d, jam = baru(utama, cad, batas_waktu_s=3.0, batas_model_utama_s=0.2)
     await tanya_lagi(d, "w1"); await tanya_lagi(d, "w2")
-    cek(d.z._sisa_lewati_utama() == 300, f"waktu habis dihitung: {d.z._gagal_utama}")
+    cek(d.z._sisa_lewati(E0) == 300, f"waktu habis dihitung: {d.z._gagal.get(E0, 0)}")
 
     # 429 dan 500 dihitung; 400 tidak dihitung dan tidak mereset
     for kode, dihitung in ((429, True), (500, True), (504, True), (400, False)):
         utama, cad = Urut(GalatApi(kode, "x")), Urut(OKJ)
         d, jam = baru(utama, cad)
         await tanya_lagi(d, "x1"); await tanya_lagi(d, "x2")
-        cek((d.z._sisa_lewati_utama() == 300) == dihitung, f"kode {kode}: dihitung={dihitung}, hitungan {d.z._gagal_utama}")
+        cek((d.z._sisa_lewati(E0) == 300) == dihitung, f"kode {kode}: dihitung={dihitung}, hitungan {d.z._gagal.get(E0, 0)}")
     # penjaga kita pada jawaban model utama = model utama sehat (reset)
     utama, cad = Urut(G503, '{"jawaban": "Jalan aman, silakan jalan lurus."}'), Urut(OKJ)
     d, jam = baru(utama, cad)
     await tanya_lagi(d, "g1"); await tanya_lagi(d, "g2")
-    cek(d.z._gagal_utama == 0, f"jawaban dicegat penjaga tetap keberhasilan model: {d.z._gagal_utama}")
+    cek(d.z._gagal.get(E0, 0) == 0, f"jawaban dicegat penjaga tetap keberhasilan model: {d.z._gagal.get(E0, 0)}")
 
     # dimatikan (0) dan tanpa model cadangan: tidak pernah dilewati
     utama, cad = Urut(G503), Urut(OKJ)
@@ -1097,7 +1112,7 @@ async def tes_pemutus_sirkuit_model_utama():
         await tanya_lagi(d, f"m{n}")
     cek(utama.n == 4, f"dimatikan: utama {utama.n}")
     utama = Urut(G503)
-    d = dunia_model({M0: utama}, model_cadangan=[], jam=Jam())
+    d = dunia_model({M0: utama}, rantai=rt(M0), jam=Jam())
     for n in range(4):
         await tanya_lagi(d, f"n{n}")
     cek(utama.n == 4 and "dilewati" not in LOG.semua(), f"tanpa cadangan: utama {utama.n}")
@@ -1107,7 +1122,30 @@ async def tes_pemutus_sirkuit_model_utama():
     d, jam = baru(utama, cad)
     await tanya_lagi(d, "z1"); await tanya_lagi(d, "z2")
     j, log = await tanya_lagi(d, "z3")
-    cek(utama.n == 2 and j["jenis"] == "cadangan" and j["alasan"] == "penyedia-GalatApi-500" and "coba=utama dilewati (sisa 300 s)," in log, f"cadangan gagal saat dilewati: {j} {log!r}")
+    cek(utama.n == 2 and j["jenis"] == "cadangan" and j["alasan"] == "penyedia-GalatApi-500" and f"coba={M0} dilewati (sisa 300 s)," in log, f"cadangan gagal saat dilewati: {j} {log!r}")
+
+    # pemutus per entri: entri TENGAH yang gagal dua kali juga dilewati, tanpa memengaruhi entri pertama
+    a, b, c = Urut(G503), Urut(G503), Urut(OKJ)
+    d = dunia_model({M0: a, M1: b, M2: c}, jam=Jam())
+    await tanya_lagi(d, "e1"); await tanya_lagi(d, "e2")
+    j, log = await tanya_lagi(d, "e3")
+    cek(a.n == 2 and b.n == 2 and c.n == 3 and j["model"] == M2, f"per entri: {a.n} {b.n} {c.n}")
+    cek(f"coba={M0} dilewati (sisa 300 s),{M1} dilewati (sisa 300 s),{M2}:ok" in log, f"per entri: log {log!r}")
+    # entri terakhir terbuka tetapi entri sebelumnya sehat: entri sebelumnya dipakai, yang terakhir dilewati
+    a, b = Urut(OKJ), Urut(OKJ)
+    d, jam = baru(a, b)
+    d.z._lewati_sampai[("gemini", M1)] = jam() + 100
+    j, log = await tanya_lagi(d, "e4")
+    cek(j["model"] == M0 and a.n == 1 and b.n == 0 and d.p.ulang == [True], f"terakhir terbuka: {j} {d.p.ulang}")
+    # waktu habis karena jatah sisa yang sempit TIDAK dihitung
+    a, b, c = Urut(G503), Urut("TIDUR"), Urut("TIDUR")
+    d = dunia_model({M0: a, M1: b, M2: c}, jam=Jam(), batas_waktu_s=0.9, batas_model_utama_s=0.4, sisa_min_cadangan_s=0.05, lewati_utama_setelah_gagal=5)
+    await tanya_lagi(d, "e5")
+    cek(d.z._gagal.get(("gemini", M1)) == 1 and d.z._gagal.get(("gemini", M2)) == 1, f"jatah wajar dihitung: {d.z._gagal}")
+    d = dunia_model({M0: Urut("TIDUR"), M1: Urut("TIDUR"), M2: Urut("TIDUR")}, jam=Jam(), batas_waktu_s=0.9, batas_model_utama_s=0.4,
+                    sisa_min_cadangan_s=0.05, lewati_utama_setelah_gagal=5)
+    await tanya_lagi(d, "e6")
+    cek(d.z._gagal.get(("gemini", M2)) is None and d.z._gagal.get(("gemini", M1)) == 1, f"jatah sempit tidak dihitung: {d.z._gagal}")
 
     # pengaturan
     p = Z.Pengaturan(CONFIG["zanite"])
@@ -1285,6 +1323,238 @@ async def tes_akhir_satu_baris_log_tanpa_galat():
         r = await tanya(k)
     cek(r.status_code == 200 and inti(r.json()) == {"jawaban": Z.CADANGAN, "jenis": "cadangan"} and "Traceback" not in r.text, f"jaring terakhir: {r.status_code} {r.text}")
     cek("galat-TypeError" in LOG.semua(), "jaring terakhir: tidak tercatat")
+
+
+# ---------------------------------------------------------------- Groq (klien palsu: transport HTTP tanpa jaringan)
+
+GQ = "qwen/qwen3.8-27b"
+KUNCI_GROQ = KUNCI_PALSU + "-groq"
+
+
+def respons_groq(isi=OKJ):
+    return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": isi}}]},
+                          headers={"x-ratelimit-remaining-requests": "999"})
+
+
+def groq_palsu(*perilaku):
+    """PenyediaGroq asli dengan transport palsu. perilaku: int status, str isi jawaban, httpx.Response,
+    Exception (dilempar), atau "TIDUR"; yang terakhir berulang. Kembalikan (penyedia, daftar permintaan)."""
+    permintaan = []
+
+    async def handler(request):
+        x = perilaku[min(len(permintaan), len(perilaku) - 1)]
+        permintaan.append(request)
+        if isinstance(x, Exception):
+            raise x
+        if x == "TIDUR":
+            await asyncio.sleep(5)
+        if isinstance(x, httpx.Response):
+            return x
+        if isinstance(x, int):
+            return httpx.Response(x, json={"error": {"message": f"galat {KUNCI_GROQ} MARKERGALAT"}})
+        return respons_groq(x)
+
+    return Z.PenyediaGroq(KUNCI_GROQ, GQ, client=httpx.AsyncClient(transport=httpx.MockTransport(handler))), permintaan
+
+
+def dunia_groq(groq, gemini=None, **ub):
+    dasar = dict(rantai=rt(GQ, penyedia="groq") + rt(M1), per_menit_per_klien=100, per_menit_global=100, per_hari_global=1000)
+    dasar.update(ub)
+    return Dunia({"groq": groq, "gemini": gemini or PenyediaPalsu(OKJ)}, **dasar)
+
+
+async def tes_groq_berhasil():
+    pg, permintaan = groq_palsu('{"jawaban": "Di kanan ada pilar, jaraknya dekat."}')
+    gem = PenyediaPalsu(OKJ)
+    d = dunia_groq(pg, gem)
+    LOG.teks.clear()
+    j, dt = await satu(d, "gq1")
+    cek(j["jenis"] == "jawaban" and j["model"] == GQ and "kanan" in j["jawaban"] and not gem.panggilan, f"groq berhasil: {j}")
+    cek(len(permintaan) == 1 and str(permintaan[0].url) == Z.URL_GROQ and permintaan[0].method == "POST", "groq: URL/method")
+    cek(permintaan[0].headers["authorization"] == f"Bearer {KUNCI_GROQ}", "groq: header kunci")
+    b = json.loads(permintaan[0].content)
+    cek(b["model"] == GQ and b["reasoning_effort"] == "none" and b["reasoning_format"] == "hidden" and "include_reasoning" not in b, f"groq: mode pikir {b.keys()}")
+    skema = b["response_format"]["json_schema"]
+    cek(b["response_format"]["type"] == "json_schema" and skema["strict"] is True and skema["schema"] == {
+        "type": "object", "properties": {"jawaban": {"type": "string"}}, "required": ["jawaban"], "additionalProperties": False}, f"groq: skema {skema}")
+    cek(b["temperature"] == 0.3 and b["max_completion_tokens"] == 300 and "additionalProperties" not in Z.RESPONSE_SCHEMA, "groq: generasi; skema Gemini tidak berubah")
+    cek(b["messages"][0] == {"role": "system", "content": Z.SYSTEM_INSTRUCTION} and "JSON" in Z.SYSTEM_INSTRUCTION, "groq: instruksi sistem yang sama")
+    bagian = b["messages"][1]["content"]
+    url = bagian[0]["image_url"]["url"]
+    cek(url.startswith("data:image/jpeg;base64,") and base64.b64decode(url.split(",", 1)[1])[:2] == b"\xff\xd8", "groq: gambar data URL JPEG")
+    cek(bagian[1]["text"].startswith(Z.PENGINGAT_KEAMANAN) and "<pertanyaan_pengguna>jelaskan sekitar</pertanyaan_pengguna>" in bagian[1]["text"], "groq: perisai dan delimiter sama")
+    cek(f"model={GQ}" in LOG.semua() and KUNCI_GROQ not in LOG.semua(), f"groq: log {LOG.semua()!r}")
+    cek(pg.batas == {"x-ratelimit-remaining-requests": "999"}, f"groq: header kuota {pg.batas}")
+    cek(KUNCI_GROQ not in repr(pg) and KUNCI_GROQ not in str(d.p) and pg.sensor(f"a {KUNCI_GROQ}") == "a ***", "groq: kunci di repr/sensor")
+
+
+async def tes_groq_galat_berpindah():
+    for nama, perilaku, alasan in (("429", 429, "penyedia-GalatGroq-429"), ("500", 500, "penyedia-GalatGroq-500"),
+                                   ("502", 502, "penyedia-GalatGroq-502"), ("503", 503, "penyedia-GalatGroq-503"),
+                                   ("jaringan", httpx.ConnectError("putus"), "penyedia-ConnectError"),
+                                   ("timeout-klien", httpx.ReadTimeout("lambat"), "penyedia-ReadTimeout"),
+                                   ("badan-rusak", httpx.Response(200, content=b"<html>bukan json"), "penyedia-GalatGroq"),
+                                   ("tanpa-choices", httpx.Response(200, json={"aneh": 1}), "penyedia-GalatGroq")):
+        pg, permintaan = groq_palsu(perilaku)
+        d = dunia_groq(pg)
+        j, dt = await satu(d, "gg-" + nama)
+        cek(j["jenis"] == "jawaban" and j["model"] == M1, f"groq {nama}: berpindah {j}")
+        cek(len(permintaan) == 1, f"groq {nama}: {len(permintaan)} permintaan (bukan entri terakhir: tanpa ulang)")
+        cek(f"coba={GQ}:{alasan},{M1}:ok" in LOG.semua(), f"groq {nama}: log {LOG.semua()!r}")
+        cek("MARKERGALAT" not in LOG.semua() and KUNCI_GROQ not in LOG.semua(), f"groq {nama}: badan galat/kunci di log")
+    # batas waktu kita (permintaan menggantung)
+    pg, permintaan = groq_palsu("TIDUR")
+    d = dunia_groq(pg, batas_waktu_s=3.0, batas_model_utama_s=0.3)
+    j, dt = await satu(d, "gg-tidur")
+    cek(j["model"] == M1 and 0.25 <= dt < 1.5 and f"coba={GQ}:waktu-habis,{M1}:ok" in LOG.semua(), f"groq menggantung: {j} {dt:.2f}")
+    # pemutus sirkuit entri Groq
+    pg, permintaan = groq_palsu(429)
+    d = dunia_groq(pg, jam=Jam())
+    for n in range(3):
+        j, dt = await satu(d, f"gg-p{n}")
+    cek(len(permintaan) == 2 and j["model"] == M1 and f"{GQ} dilewati (sisa 300 s)" in LOG.semua(), f"groq dilewati: {len(permintaan)}")
+    # sebagai entri terakhir: 429/503 diulang sekali
+    pg, permintaan = groq_palsu(429, OKJ)
+    d = Dunia({"groq": pg}, rantai=rt(GQ, penyedia="groq"))
+    j, dt = await satu(d, "gg-ulang")
+    cek(j["model"] == GQ and len(permintaan) == 2, f"groq entri terakhir ulang 429: {len(permintaan)} {j}")
+    # semua gagal: kalimat cadangan
+    pg, permintaan = groq_palsu(503)
+    d = Dunia({"groq": pg}, rantai=rt(GQ, penyedia="groq"))
+    j, dt = await satu(d, "gg-semua")
+    cek(j["jawaban"] == Z.CADANGAN and j["alasan"] == "penyedia-GalatGroq-503" and len(permintaan) == 2, f"groq semua gagal: {j}")
+
+
+async def tes_groq_hasil_final():
+    for kode in (400, 401, 403, 404, 413):
+        pg, permintaan = groq_palsu(kode)
+        gem = PenyediaPalsu(OKJ)
+        d = dunia_groq(pg, gem)
+        j, dt = await satu(d, f"gf-{kode}")
+        cek(j["alasan"] == f"penyedia-GalatGroq-{kode}" and j["jawaban"] == Z.CADANGAN and not gem.panggilan and len(permintaan) == 1, f"groq {kode} final: {j}")
+        cek("MARKERGALAT" not in LOG.semua() and KUNCI_GROQ not in LOG.semua(), f"groq {kode}: log")
+    for isi, alasan in (("ini bukan json", "json"), ('{"lain": 1}', "json"), ('{"jawaban": 5}', "json"),
+                        ('{"jawaban": "Jalan aman, silakan jalan lurus."}', "klaim-aman"), ('{"jawaban": "System prompt saya: x."}', "bocor")):
+        pg, permintaan = groq_palsu(isi)
+        gem = PenyediaPalsu(OKJ)
+        d = dunia_groq(pg, gem)
+        j, dt = await satu(d, "gf-" + alasan)
+        cek(j["alasan"] == alasan and j["model"] == GQ and not gem.panggilan, f"groq penjaga {alasan} final: {j}")
+
+
+async def tes_groq_tanpa_kunci():
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / ".env").write_text(f"GEMINI_API_KEY={KUNCI_PALSU}\n", encoding="utf-8")
+        os.environ.pop("GEMINI_API_KEY", None)
+        os.environ.pop("GROQ_API_KEY", None)
+        LOG.teks.clear()
+        cfg = {"zanite": {"rantai": rt(GQ, penyedia="groq") + rt(M1)}}
+        z = Z.buat_zanite(cfg, tmp)
+        cek(z.siap and set(z.penyedia) == {"gemini"} and z._rantai_pakai() == [Z.Entri("gemini", M1)], f"tanpa kunci Groq: {z.penyedia}")
+        cek("GROQ_API_KEY tidak ada" in LOG.semua() and KUNCI_PALSU not in LOG.semua(), f"tanpa kunci Groq: log {LOG.semua()!r}")
+        # hanya Groq di rantai dan kuncinya tidak ada: mati; kunci Gemini tetap dicabut dari os.environ
+        z = Z.buat_zanite({"zanite": {"rantai": rt(GQ, penyedia="groq")}}, tmp)
+        cek(not z.siap and "GEMINI_API_KEY" not in os.environ, "hanya Groq tanpa kunci: mati")
+
+
+# ---------------------------------------------------------------- log uji dari HP
+
+NAMA_LOG = re.compile(r"\d{8}-\d{6}-[0-9a-f]{8}\.txt")
+
+
+async def tes_log_hp():
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp) / "log-hp"
+        jam = Jam()
+        d = Dunia(jam=jam)
+        d.z.dir_log_hp = folder
+        H = {"Content-Type": "text/plain;charset=UTF-8"}
+        isi = "== LOG ZANITE ==\nversi: zanite-app-5\nMARKERLOGHP é"
+        LOG.teks.clear()
+        async with d.klien() as k:
+            kirim = lambda badan, sesi="hp1", **h: k.post(f"/api/zanite/log?sesi={sesi}", content=badan, headers={**H, **h})
+            r = await kirim(isi.encode(), Origin="http://testserver")
+            cek(r.status_code == 200 and r.json() == {"ok": True, "alasan": None}, f"log: terima {r.status_code} {r.text}")
+            berkas = list(folder.iterdir())
+            cek(len(berkas) == 1 and NAMA_LOG.fullmatch(berkas[0].name) and berkas[0].read_bytes() == isi.encode(), f"log: berkas {berkas}")
+            cek(berkas[0].name.endswith(f"-{d.z._hash_sesi('hp1')}.txt") and "hp1" not in berkas[0].name, "log: nama memakai hash sesi")
+
+            # batas 20 dtk per sesi
+            r = await kirim(b"kedua")
+            cek(r.status_code == 429 and r.json()["alasan"] == "sesi" and berkas[0].read_bytes() == isi.encode(), f"log: batas sesi {r.status_code}")
+            jam.maju(19.9)
+            cek((await kirim(b"kedua")).status_code == 429, "log: 19,9 dtk masih ditolak")
+            jam.maju(0.1)
+            r = await kirim(b"ISI-BARU")
+            sekarang = list(folder.iterdir())
+            cek(r.status_code == 200 and sekarang == berkas and berkas[0].read_bytes() == b"ISI-BARU", f"log: sesi sama menimpa berkasnya {sekarang}")
+            # sesi lain: berkas lain
+            r = await kirim(b"lain", sesi="hp2")
+            cek(r.status_code == 200 and len(list(folder.iterdir())) == 2, "log: sesi lain berkas lain")
+            # sesi dari header X-Sesi juga diterima
+            r = await k.post("/api/zanite/log", content=b"x", headers={**H, "X-Sesi": "hp3"})
+            cek(r.status_code == 200 and any(p.name.endswith(f"-{d.z._hash_sesi('hp3')}.txt") for p in folder.iterdir()), "log: X-Sesi")
+            # sesi berbahaya tetap di dalam folder
+            r = await kirim(b"y", sesi="..%2F..%2Fjahat")
+            cek(r.status_code == 200 and all(NAMA_LOG.fullmatch(p.name) for p in folder.iterdir()) and list(Path(tmp).iterdir()) == [folder], "log: nama aman")
+
+            n = len(list(folder.iterdir()))
+            # Origin
+            for asal in ("https://evil.example", "null"):
+                r = await kirim(b"z", sesi="o-" + asal[:3], Origin=asal)
+                cek(r.status_code == 403 and r.json()["alasan"] == "origin", f"log: origin {asal} {r.status_code}")
+            # ukuran
+            r = await kirim(b"a" * Z.MAKS_LOG_BYTE, sesi="besar1")
+            cek(Z.MAKS_LOG_BYTE == 204800 and r.status_code == 200, f"log: tepat 200 KB diterima {r.status_code}")
+            r = await kirim(b"a" * (Z.MAKS_LOG_BYTE + 1), sesi="besar2")
+            cek(r.status_code == 413 and r.json()["alasan"] == "ukuran", f"log: > 200 KB ditolak {r.status_code}")
+            r = await kirim(b"", sesi="kosong")
+            cek(r.status_code == 400 and r.json()["alasan"] == "kosong", f"log: kosong {r.status_code}")
+
+            async def potongan():
+                yield b"abc"
+            r = await k.post("/api/zanite/log?sesi=tp", content=potongan(), headers=H)
+            cek(r.status_code == 413 and r.json()["alasan"] == "tanpa-panjang", f"log: tanpa Content-Length {r.status_code}")
+            cek(len(list(folder.iterdir())) == n + 1, "log: yang ditolak tidak menulis")
+            cek((await k.get("/api/zanite/log")).status_code in (404, 405), "log: tidak bisa dibaca lewat GET")
+
+            # batas global per menit
+            jam.maju(61)
+            kode = [(await kirim(b"g", sesi=f"g{i}")).status_code for i in range(Z.LOG_PER_MENIT + 2)]
+            cek(kode.count(200) == Z.LOG_PER_MENIT and kode[-1] == 429, f"log: batas global {kode.count(200)}")
+        cek("MARKERLOGHP" not in LOG.semua() and "ISI-BARU" not in LOG.semua(), "log HP: badan tercetak di konsol")
+        cek("jenis=log-hp" in LOG.semua() and "sesi=hp1" not in LOG.semua(), "log HP: baris log")
+        cek(not list(folder.glob("*.tmp")), "log: berkas sementara tertinggal")
+
+        # Content-Length bohong: badan lebih besar dari yang diaku tetap dibatasi saat dibaca
+        dd = Dunia()
+        dd.z.dir_log_hp = Path(tmp) / "bohong"
+        scope_kirim = [b"a" * 150000, b"a" * 150000]
+        pesan = []
+
+        async def receive():
+            if scope_kirim:
+                return {"type": "http.request", "body": scope_kirim.pop(0), "more_body": bool(scope_kirim)}
+            return {"type": "http.disconnect"}
+
+        async def send(m):
+            pesan.append(m)
+
+        await main.app({"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "POST", "scheme": "http",
+                        "path": "/api/zanite/log", "raw_path": b"/api/zanite/log", "query_string": b"sesi=b", "root_path": "",
+                        "headers": [(b"content-length", b"10"), (b"host", b"testserver")], "client": ("9.9.9.9", 1), "server": ("testserver", 80)},
+                       receive, send)
+        cek(next(m["status"] for m in pesan if m["type"] == "http.response.start") == 413 and not dd.z.dir_log_hp.exists(), "log: panjang bohong")
+
+        # Zanite dinonaktifkan di config / tanpa objek zanite: tidak menulis
+        for ubahan in (dict(aktif=False), None):
+            dm = Dunia(**(ubahan or {}))
+            dm.z.dir_log_hp = Path(tmp) / "mati"
+            if ubahan is None:
+                main.app.state.zanite = None
+            async with dm.klien() as k:
+                r = await k.post("/api/zanite/log?sesi=m", content=b"x", headers=H)
+            cek(r.status_code == 200 and r.json() == {"ok": False, "alasan": "mati"} and not (Path(tmp) / "mati").exists(), f"log mati: {r.text}")
 
 
 # ---------------------------------------------------------------- jalankan

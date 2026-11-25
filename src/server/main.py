@@ -209,6 +209,15 @@ async def zanite_jawab(
     return await zanite.tangani(request, x_sesi)
 
 
+@app.post("/api/zanite/log")
+async def zanite_log(request: Request):
+    """Log uji dari HP; pemeriksaan dan penyimpanan di zanite.py."""
+    zanite = getattr(request.app.state, "zanite", None)
+    if zanite is None:
+        return JSONResponse(content={"ok": False, "alasan": "mati"})
+    return await zanite.terima_log(request)
+
+
 # Halaman web (src/web/). Harus SETELAH semua route /api supaya
 # tidak menutupi route di atas.
 app.mount(
