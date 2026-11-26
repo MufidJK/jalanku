@@ -998,7 +998,7 @@ async function tes(nama, fn) {
     d.ucap("Janit"); await d.maju(800 + 150 + DURASI_BICARA + 600);     // dua langkah, sesudah ekor 500 ms balasan
     d.ucap("itu apa di depan?"); await d.maju(1300 + 1000);                // jawaban
     const L = d.ctx.Zanite.laporan();
-    cek("header: versi, userAgent, suara + bahasa, TAIL/DIAM/LEMAH", /versi: zanite-app-5/.test(L) && /userAgent: UA-uji/.test(L) && /suara: Suara Indonesia \(in-ID\)/.test(L) && /TAIL_MS: 500/.test(L) && /DIAM_MS: 800/.test(L) && /LEMAH_MS: 1200/.test(L), L.slice(0, 400));
+    cek("header: versi, userAgent, suara + bahasa, TAIL/DIAM/LEMAH", /versi: zanite-app-6/.test(L) && /userAgent: UA-uji/.test(L) && /suara: Suara Indonesia \(in-ID\)/.test(L) && /TAIL_MS: 500/.test(L) && /DIAM_MS: 800/.test(L) && /LEMAH_MS: 1200/.test(L), L.slice(0, 400));
     cek("hitungan: wake per tipe", /wake per tipe: .*=\d/.test(L), L);
     for (const k of ["gema dibuang", "transkrip diterima saat app bicara", "wake saat app bicara", "peringatan ditahan saat fokus", "selesai-paksa", "pengenal restart", "galat pengenal per jenis", "permintaan terkirim: 1", "jawaban per jenis: jawaban=1", "jawaban usang dibuang: 0", "bip gagal: 0"])
       cek("hitungan memuat: " + k, L.includes(k), k);
@@ -1114,6 +1114,66 @@ async function tes(nama, fn) {
     cek("perintah pengguna sesudahnya dikirim", d.zanite().length === 1 && JSON.parse(d.zanite()[0].init.body).teks === "jelaskan sekitar", d.zanite().map((c) => c.init.body));
   });
 
+  await tes("gema hanya dipotong pada hasil yang kata pertamanya datang saat app bicara (atau ekor 500 ms)", async () => {
+    const KDD = "Kendaraan di depan, dekat";
+    const utuh = (d, t) => d.ctx.Zanite.debug().some((x) => x.includes(t) && !x.includes("gema dipotong"));
+    // peringatan sudah selesai: "di depan ada apa" utuh, di jendela maupun di log
+    const d = buatDunia();
+    await d.mulai();
+    d.peringatan(KDD); await d.maju(DURASI_BICARA + 600);
+    d.ucap("Janet", true); await d.maju(150 + DURASI_BICARA + 700);
+    d.ucap("di depan ada apa", true); await d.maju(300);
+    cek("sesudah peringatan selesai: 'di depan ada apa' utuh", d.zanite().length === 1 && JSON.parse(d.zanite()[0].init.body).teks === "di depan ada apa", d.zanite().map((c) => c.init.body));
+    cek("tidak ada yang dipotong", d.ctx.Zanite._uji.hitung.gemaDipotong === 0 && d.ctx.Zanite._uji.hitung.gemaDibuang === 0);
+
+    // batas ekor: 499 ms sesudah selesai masih dipotong, 500 ms sudah tidak
+    for (const [jeda, harap] of [[499, "ada apa"], [500, "di depan ada apa"]]) {
+      const e = buatDunia();
+      await e.mulai();
+      e.peringatan(KDD); await e.maju(DURASI_BICARA + jeda);
+      e.ucap("di depan ada apa", true);
+      const diteruskan = e.ctx.Zanite.debug().map((x) => (x.match(/ms F (?:\(app bicara\) )?(.*?)(?: {3}\[gema dipotong.*)?$/) || [])[1]).filter(Boolean);
+      cek(jeda + " ms sesudah selesai: diteruskan '" + harap + "'", diteruskan.join() === harap, diteruskan);
+    }
+
+    // mulai saat app bicara, terus tumbuh sesudah app selesai: tetap dipotong
+    const f = buatDunia();
+    await f.mulai();
+    f.peringatan(KDD); await f.maju(100);
+    const i = f.ucap("kendaraan di", false); await f.maju(DURASI_BICARA + 2000);
+    f.ucap("kendaraan di depan dekat Janet", true, i); await f.maju(10);
+    cek("mulai saat bicara: dipotong walau app sudah lama diam, kata bangun menyala", f.bips === 1, f.bips);
+
+    // mulai saat hening, app bicara di tengah hasil: tidak pernah dipotong
+    const g = buatDunia();
+    await g.mulai();
+    g.peringatan(KDD); await g.maju(DURASI_BICARA + 600);
+    const j = g.ucap("di depan", false);
+    g.peringatan("Tangga di depan"); await g.maju(100);         // pesan lain: pesan yang sama tidak diulang secepat itu
+    g.ucap("di depan ada apa", false, j);
+    cek("mulai saat hening: utuh walau app mulai bicara di tengahnya", utuh(g, "(app bicara) di depan ada apa") && g.ctx.Zanite._uji.hitung.gemaDipotong === 0, g.ctx.Zanite.debug().slice(-3));
+  });
+
+  await tes("jendela perintah: sisa yang hanya kata seru diabaikan, terus menunggu", async () => {
+    const d = buatDunia();
+    await d.mulai();
+    d.ucap("Janet", true); await d.maju(150 + DURASI_BICARA + 100);
+    d.peringatan("Area kendaraan, hati-hati", 3); await d.maju(900); d.peringatan("Kendaraan di depan, dekat", 3); await d.maju(100);
+    d.ucap("kendaraan di depan hati-hati kendaraan di depan oh", true);   // log HP 4 no. 3: sisa "oh"
+    await d.maju(1500);
+    cek("'oh' tidak dikirim, jendela tetap terbuka", d.zanite().length === 0 && d.status.textContent === "Zanite mendengar", d.zanite().map((c) => c.init.body));
+    d.ucap("hmm ya", true); await d.maju(1500);
+    cek("'hmm ya' tidak dikirim", d.zanite().length === 0, d.zanite().map((c) => c.init.body));
+    d.ucap("jelaskan sekitar"); await d.maju(710);
+    cek("perintah sesudahnya dikirim tanpa kata seru", d.zanite().length === 1 && JSON.parse(d.zanite()[0].init.body).teks === "jelaskan sekitar", d.zanite().map((c) => c.init.body));
+
+    const e = buatDunia();
+    await e.mulai();
+    e.ucap("Janet", true); await e.maju(150 + DURASI_BICARA + 100);
+    e.ucap("oh", true); await e.maju(6100);
+    cek("hanya kata seru sampai jendela habis: pesan 'tidak terdengar'", e.zanite().length === 0 && e.diucap.includes(TAK_TERDENGAR), e.diucap);
+  });
+
   await tes("potongan yang ternyata gema ditarik kembali dari jendela", async () => {
     const d = buatDunia();
     await d.mulai();
@@ -1155,10 +1215,11 @@ async function tes(nama, fn) {
     cek("belum diucapkan sebelum 2500 ms", !d.diucap.includes(SEBENTAR), d.diucap);
     await d.maju(40);
     cek("diucapkan di 2500 ms", d.diucap.filter((x) => x === SEBENTAR).length === 1, d.diucap);
+    cek("teksnya ikut disaring sebagai gema", (d.ucap("sebentar", true), d.ctx.Zanite._uji.hitung.gemaDibuang === 1));
     await d.maju(5000);
     cek("hanya sekali, lalu jawaban", d.diucap.filter((x) => x === SEBENTAR).length === 1 && d.diucap[d.diucap.length - 1].startsWith("Di kiri"), d.diucap);
     cek("dihitung di laporan", /'Sebentar\.' diucapkan: 1/.test(d.ctx.Zanite.laporan()));
-    cek("teksnya ikut disaring sebagai gema", (d.ucap("sebentar", true), d.ctx.Zanite._uji.hitung.gemaDibuang === 1));
+    cek("hasil yang mulai saat hening tidak disaring", (d.ucap("sebentar", true), d.ctx.Zanite._uji.hitung.gemaDibuang === 1), d.ctx.Zanite._uji.hitung.gemaDibuang);
 
     const e = buatDunia({ tundaJawab: 2400 });
     await e.mulai();
@@ -1196,7 +1257,7 @@ async function tes(nama, fn) {
     cek("diunggah di 60 dtk", d.unggah().length === 1, d.unggah().length);
     const u = d.unggah()[0];
     cek("bentuk: POST teks polos ke /api/zanite/log?sesi=", u.url === "/api/zanite/log?sesi=sesi-uji" && u.init.method === "POST" && u.init.headers["Content-Type"] === "text/plain;charset=UTF-8", [u.url, u.init.headers]);
-    cek("badan = teks yang sama dengan 'Salin log Zanite'", u.init.body.startsWith("== LOG ZANITE ==\nversi: zanite-app-5") && u.init.body.includes("== HITUNGAN =="), u.init.body.slice(0, 80));
+    cek("badan = teks yang sama dengan 'Salin log Zanite'", u.init.body.startsWith("== LOG ZANITE ==\nversi: zanite-app-6") && u.init.body.includes("== HITUNGAN =="), u.init.body.slice(0, 80));
     await d.maju(60000);
     cek("diunggah lagi di 120 dtk", d.unggah().length === 2, d.unggah().length);
     // Berhenti 5 dtk sesudah unggahan berkala: ditunda sampai lewat 20 dtk, tidak dibuang

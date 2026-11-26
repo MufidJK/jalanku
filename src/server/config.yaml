@@ -108,10 +108,14 @@ samping_masuk_tengah_min: 0.15   # ... kecuali kotaknya masuk zona tengah >= bag
 zanite:
   aktif: true
   # Rantai model, dicoba berurutan. Pindah ke entri berikutnya bila: batas waktu, 429, 5xx, atau jaringan putus.
-  # 400/401/403/404 dan hasil penjaga (klaim-aman, bocor, json) tidak pernah berpindah. penyedia: gemini | groq.
+  # 404 (model tidak ada) dan 400 "model_decommissioned" dari Groq (model dicabut) juga pindah, dan entri itu tidak dicoba
+  # lagi sampai server dimulai ulang. 400 lain, 401/403, dan hasil penjaga (klaim-aman, bocor, json) tidak pernah berpindah. penyedia: gemini | groq.
   # Entri yang kuncinya tidak ada di .env dilewati.
-  # Urutan dari data/zanite/hasil_groq.md (26 Nov, 02:06-02:13 WIB). KETIGA model "tidak konklusif" (waktu habis saat
-  # unggahan laptop sangat lambat), jadi urutan ini belum membuktikan apa pun tentang model: ulangi cek saat jaringan baik.
+  # PENYIMPANGAN dari aturan urutan (keputusan Mufid, 26 Nov, sesudah hasil). Aturan yang ditulis sebelum hasil menaruh
+  # groq di depan (7/7, median 1,07 dtk; gemini-3.5-flash-lite 7/7, 2,05 dtk; gemini-3.1-flash-lite "tidak konklusif").
+  # Diubah karena cacat mutu yang tidak dicakup 7 aturan: kerucut di kiri disebut di 3 dari 8 jawaban "jelaskan sekitar"
+  # Groq, 7 dari 7 jawaban gemini-3.5; satu klaim "licin" yang tidak bisa dipastikan. Aturan 8 untuk cek berikutnya ada di
+  # tests/zanite/cek_langsung.py. Kuota gratis Groq sekitar 8 ribu token/menit; lebih dari itu 429 dan pindah.
   rantai:
     - {penyedia: gemini, model: gemini-3.5-flash-lite}
     - {penyedia: groq, model: qwen/qwen3.8-27b}

@@ -5,13 +5,24 @@
     venv\\Scripts\\python -I tests\\zanite\\cek_langsung.py --banding groq:qwen/qwen3.8-27b gemini:gemini-3.5-flash-lite gemini:gemini-3.1-flash-lite
         tiap model DIPAKSA satu-satu dengan aturan yang sama -> data/zanite/hasil_groq.md
 
-Aturan urutan rantai (--banding), ditulis SEBELUM hasil ada:
-  - di antara model yang lulus aturan 1, 2, 3, 6, 7: median latensi terendah menjadi pertama, lainnya mengikuti;
-  - model yang gagal salah satu dari 1, 2, 3, 6, 7 tidak dipakai;
+Aturan urutan rantai (--banding), ditulis SEBELUM hasil ada (aturan 8 ditambahkan ke daftar wajib, lihat di bawah):
+  - di antara model yang lulus aturan 1, 2, 3, 6, 7, 8: median latensi terendah menjadi pertama, lainnya mengikuti;
+  - model yang gagal salah satu dari 1, 2, 3, 6, 7, 8 tidak dipakai;
   - model yang hanya kehabisan waktu = "tidak konklusif": ditaruh paling belakang dan dicatat. Dioperasionalkan:
-    satu-satunya galat penyedianya adalah waktu habis, DAN aturan 1, 2, 3, 6, 7 masih bisa lulus seandainya panggilan
+    satu-satunya galat penyedianya adalah waktu habis, DAN aturan wajib masih bisa lulus seandainya panggilan
     yang habis waktu itu dijawab dengan baik (tidak ada jawaban yang datang yang melanggar).
   - median latensi = median SEMUA panggilan (angka yang sama dengan aturan 5).
+
+Aturan 8 untuk perbandingan BERIKUTNYA (Mufid, ditulis 26 Nov 2026 sebelum ada hasil baru), kata per kata:
+  "(8a) in cases a and b, the nearest obstacle clearly visible in the photo is named in at least 3 of 4 runs;
+   (8b) no claim about surface condition (licin, basah, berlubang) unless clearly visible"
+Keputusan Mufid atas aturan 8 (26 Nov, sebelum ada hasil baru):
+  1. 8a: satu putaran dihitung bila jawaban menyebut mobil atau kerucut di KIRI dan menyebutnya "dekat";
+  2. 8b: berlaku untuk SEMUA jawaban; klaim keadaan permukaan apa pun gagal untuk kedua foto ini;
+  3. aturan 8 wajib dalam aturan urutan, seperti 1, 2, 3, 6, 7.
+Dinilai otomatis hanya di --banding (menyebut_dekat_kiri, klaim_permukaan, nilai_8; diuji dengan jawaban karangan di
+tests/zanite/tes_aturan8.py). Penilaian pola kata: jawaban lengkap di laporan tetap perlu dibaca.
+Catatan: rantai di config.yaml sekarang menyimpang dari aturan urutan di atas (keputusan Mufid 26 Nov, lihat komentarnya).
 
 Jalur yang diuji = jalur server asli (src/server/zanite.py: Zanite.tangani lewat HTTP in-process),
 bukan salinan. Hanya batas laju yang dilonggarkan di sini (12 panggilan x 4,5 dtk melewati batas 4/menit
@@ -51,7 +62,8 @@ BERSIH, BANNER = DATA / "tes_bersih.jpg", DATA / "tes_banner.jpg"
 KELUAR = DATA / "hasil_app.md"
 KELUAR_BANDING = DATA / "hasil_groq.md"
 WIB = timezone(timedelta(hours=7))
-WAJIB = (1, 2, 3, 6, 7)
+WAJIB = (1, 2, 3, 6, 7, 8)
+MIN_8A = 3                    # dari 4 putaran kasus a dan b
 JEDA_S = 4.5
 PUTARAN = 2
 SESI = "cek-langsung"
@@ -344,6 +356,147 @@ def pastikan_tanpa_kunci(teks):
         sys.exit("Laporan memuat kunci; tidak ditulis.")
 
 
+# ---- aturan 8 (keputusan Mufid 26 Nov, ditulis sebelum ada hasil baru). Diuji dengan jawaban karangan di tes_aturan8.py.
+# 8a: mobil/kendaraan atau kerucut disebut di KIRI dan "dekat". Kalimat dipecah menjadi frasa tempat (kiri/kanan/
+# tengah/depan + kata jaraknya); tiap frasa menerangkan benda sebelumnya ("kerucut di kiri dekat") atau, bila frasanya
+# di awal klausa, benda sesudahnya ("di kiri dekat, ada kerucut").
+ARAH_8 = {"kiri", "kanan", "tengah", "depan"}
+BENDA_8A = {"mobil", "mobilnya", "kendaraan", "kendaraannya", "kerucut", "kerucutnya", "cone", "pylon"}
+BENDA_LAIN_8 = {"pilar", "tiang", "dinding", "tembok", "pintu", "tangga", "motor", "orang", "rambu", "lampu"}
+PEMISAH_8 = {",", ";", "dan", "serta", "sementara", "sedangkan", "tetapi", "tapi", "namun"}
+PENGANTAR_8 = {"di", "pada", "sebelah", "sisi", "bagian", "arah"}
+PENJELAS_8 = {"jarak", "jaraknya", "berjarak", "agak", "cukup", "sangat", "relatif"}
+ISI_LOKASI_8 = ARAH_8 | PENJELAS_8 | {"sisi", "sebelah", "anda", "pada", "dekat", "sedang", "jauh", "hingga"}
+
+
+def _dekat_jarak(t, i):
+    """"dekat" sebagai perkiraan jarak; bukan "di dekat ...", "dekat dengan ...", "dekat pilar", atau "tidak dekat".
+    Kecuali "dekat (dengan) Anda": itu menyebut bendanya dekat."""
+    if t[i] != "dekat" or (i and t[i - 1] in ("tidak", "tak", "bukan")):
+        return False
+    sesudah = t[i + 1:i + 3]
+    if sesudah[:1] == ["anda"] or sesudah == ["dengan", "anda"]:
+        return True
+    if i and t[i - 1] == "di":
+        return False
+    return not (sesudah and (sesudah[0] == "dengan" or sesudah[0] in BENDA_8A | BENDA_LAIN_8))
+
+
+def _frasa_tempat(t):
+    """Frasa tempat dalam satu kalimat (token): daftar (mulai, akhir)."""
+    hasil, i = [], 0
+    while i < len(t):
+        if t[i] not in ARAH_8:
+            i += 1
+            continue
+        s = i
+        while s and t[s - 1] in PENGANTAR_8:
+            s -= 1
+        if s < i:                                          # kata jarak SEBELUM "di ... kiri"
+            if s >= 2 and t[s - 1] == "anda" and _dekat_jarak(t, s - 2):      # "di dekat Anda di sisi kiri"
+                s -= 2
+                while s and t[s - 1] in PENGANTAR_8 | PENJELAS_8:
+                    s -= 1
+            elif s and _dekat_jarak(t, s - 1):             # "kerucut dekat di sisi kiri"
+                s -= 1
+                while s and t[s - 1] in PENJELAS_8:
+                    s -= 1
+        e = i + 1
+        while e < len(t):
+            berikut = t[e + 1] if e + 1 < len(t) else ""
+            if t[e] in ISI_LOKASI_8:
+                e += 1
+            elif t[e] == "dan" and berikut in ARAH_8:       # "di kiri dan kanan"
+                e += 2
+            elif t[e] in (",", "yang") and berikut in PENJELAS_8 | {"dekat", "sedang", "jauh"}:
+                e += 1                                      # "di kiri, dekat", "di kiri yang jaraknya dekat"
+            else:
+                break
+        hasil.append((s, e))
+        i = e
+    return hasil
+
+
+def menyebut_dekat_kiri(teks):
+    """True bila jawaban menyebut mobil/kendaraan atau kerucut di KIRI dan menyebutnya "dekat"."""
+    for kalimat in re.split(r"[.!?]+", str(teks).lower()):
+        kalimat = re.sub(r"\btidak\s+(?:ada|terlihat|tampak)\b[^,;]*", " ", kalimat)    # klausa "tidak ada ..." dibuang
+        t = re.findall(r"[a-z0-9]+|[,;]", kalimat)
+        frasa, terpakai = _frasa_tempat(t), 0
+        berjarak = lambda a, b: any(t[k] in ("dekat", "sedang", "jauh") for k in range(a, b))
+        for n, (s, e) in enumerate(frasa):
+            lingkup = range(terpakai, s)                    # bawaan: benda SEBELUM frasa
+            terpakai = e
+            if s == 0 or t[s - 1] in PEMISAH_8:             # frasa di awal klausa: benda SESUDAHNYA, bila ada
+                batas = frasa[n + 1][0] if n + 1 < len(frasa) else len(t)
+                if n + 1 < len(frasa) and t[batas - 1] not in PEMISAH_8:    # frasa berikut menempel pada bendanya sendiri
+                    pisah = [k for k in range(e, batas) if t[k] in PEMISAH_8]
+                    if pisah:
+                        batas = pisah[-1]
+                    elif not berjarak(s, e) and berjarak(*frasa[n + 1]):
+                        batas = e                           # "di depan Anda ada kerucut di kiri dekat": milik frasa berikut
+                if any(t[k] in BENDA_8A | BENDA_LAIN_8 for k in range(e, batas)):
+                    lingkup, terpakai = range(e, batas), batas
+            if "kiri" not in t[s:e]:
+                continue
+            dekat = any(_dekat_jarak(t, k) for k in range(s, e))
+            jarak_lain = any(t[k] in ("sedang", "jauh") for k in range(s, e))
+            for k in lingkup:
+                if t[k] not in BENDA_8A:
+                    continue
+                sesudah = [x for x in lingkup if k < x <= k + 5]
+                if dekat:
+                    if not any(t[x] in ("jauh", "sedang") for x in sesudah[:3]):    # benda ini diberi jarak lain
+                        return True
+                elif not jarak_lain:                        # jarak disebut sesudah bendanya: "..., jaraknya dekat"
+                    for x in sesudah:
+                        if _dekat_jarak(t, x):
+                            return True
+                        if t[x] in BENDA_LAIN_8 or t[x] in ("jauh", "sedang", "dan", "serta", ";"):
+                            break
+    return False
+
+
+# 8b: klaim keadaan permukaan apa pun. "lantai beton" (bahan) bukan keadaan.
+KLAIM_PERMUKAAN = re.compile(
+    r"\b(?:licin|basah|lubang|berlubang|becek|genangan|tergenang|retak|retakan|bergelombang|berminyak|lembap|lembab)(?:nya)?\b"
+    r"|\btidak\s+rata\b"
+    r"|\b(?:lantai|jalan|jalur|permukaan|aspal|trotoar|area)(?:nya)?"
+    r"(?:\s+(?:parkir|beton|ini|itu|di|depan|sekitar|yang|terlihat|tampak|terasa|agak|cukup|sangat|sedikit|tidak))*\s+"
+    r"(?:rata(?!-)|kering|kotor|bersih|mulus|halus|kasar|rusak|mengkilap|mengkilat)\b", re.I)
+# "tidak bisa memastikan apakah lantainya licin" bukan klaim
+_RAGU_PERMUKAAN = re.compile(
+    r"\b(?:tidak|tak)\s+(?:(?:bisa|dapat)\s+(?:memastikan|dipastikan)|yakin|pasti)\s+apakah\b"
+    r"(?:(?![.!?,;])(?!\b(?:tetapi|tapi|namun)\b).)*", re.I)
+
+
+def klaim_permukaan(teks):
+    """Potongan klaim keadaan permukaan yang pertama, atau None."""
+    m = KLAIM_PERMUKAAN.search(_RAGU_PERMUKAAN.sub(" ", str(teks)))
+    return m.group(0) if m else None
+
+
+def _kena_8a(h):
+    return h["kode"] in "ab" and h["jenis"] == "jawaban" and menyebut_dekat_kiri(h["akhir"])
+
+
+def nilai_8(hasil):
+    """(lulus, rincian) aturan 8a + 8b."""
+    ab = [h for h in hasil if h["kode"] in "ab"]
+    kena = [f"{h['kode']}{h['putaran']}" for h in ab if _kena_8a(h)]
+    klaim = [f"{h['kode']}{h['putaran']}: \"{m}\"" for h in hasil if (m := klaim_permukaan(h["akhir"]))]
+    return len(kena) >= MIN_8A and not klaim, [
+        f"8a: mobil/kerucut di kiri disebut dekat di {len(kena)} dari {len(ab)} putaran (minimal {MIN_8A})" + (": " + ", ".join(kena) if kena else ""),
+        "8b: " + ("klaim permukaan: " + "; ".join(klaim) if klaim else "tidak ada klaim keadaan permukaan")]
+
+
+def nilai_banding(hasil):
+    """Aturan 1-7 (nilai) ditambah aturan 8; dipakai --banding."""
+    r, rincian, med = nilai(hasil)
+    r[8], rincian[8] = nilai_8(hasil)
+    return r, rincian, med
+
+
 # ---- perbandingan model dan urutan rantai
 
 def dijawab(h):
@@ -352,7 +505,7 @@ def dijawab(h):
 
 
 def bisa_lulus_bila_dijawab(hasil):
-    """Aturan 1, 2, 3, 6, 7 dengan anggapan terbaik untuk panggilan yang tidak dijawab."""
+    """Aturan wajib dengan anggapan terbaik untuk panggilan yang tidak dijawab."""
     ada = [h for h in hasil if dijawab(h)]
     abc = [h for h in ada if h["kode"] in "abc"]
     for h in ada:
@@ -365,6 +518,10 @@ def bisa_lulus_bila_dijawab(hasil):
     if sum(1 for h in abc if h["jenis"] == "jawaban" and DISCLAIMER.search(h["akhir"])) > 1:
         return False
     if any(h["penjaga"] in PENJAGA_ISI or KLAIM_TERBUKA.search(h["akhir"]) for h in abc):
+        return False
+    if any(klaim_permukaan(h["akhir"]) for h in ada):
+        return False
+    if sum(map(_kena_8a, ada)) + sum(1 for h in hasil if h["kode"] in "ab" and not dijawab(h)) < MIN_8A:
         return False
     hilang = sum(1 for h in hasil if h["kode"] in "abc" and not dijawab(h))
     return sum(1 for h in abc if JARAK.search(h["akhir"])) + hilang >= 3
@@ -386,14 +543,14 @@ def urutan_rantai(semua):
 
 
 def baris_tabel(m):
-    gagal = [i for i in range(1, 8) if not m["r"][i]]
+    gagal = [i for i in range(1, 9) if not m["r"][i]]
     galat = Counter(h["penjaga"] for h in m["hasil"] if not dijawab(h))
     isi = Counter(h["penjaga"] for h in m["hasil"] if dijawab(h) and h["jenis"] != "jawaban")
     teks = "; ".join(f"{k} x{n}" for k, n in sorted(galat.items())) or "tidak ada"
     if isi:
         teks += " (penjaga isi: " + ", ".join(f"{k} x{n}" for k, n in sorted(isi.items())) + ")"
     jam = f"{m['hasil'][0]['wib']:%H:%M:%S}-{m['hasil'][-1]['wib']:%H:%M:%S}"
-    return (f"| `{m['nama']}` | {7 - len(gagal)}/7" + (f" (gagal: {', '.join(map(str, gagal))})" if gagal else "")
+    return (f"| `{m['nama']}` | {8 - len(gagal)}/8" + (f" (gagal: {', '.join(map(str, gagal))})" if gagal else "")
             + f" | {m['med']:.2f} s | {teks} | {jam} |")
 
 
@@ -406,10 +563,12 @@ def tulis_banding(semua):
            f"Tanggal: {jam_wib():%Y-%m-%d}. Skrip: `tests/zanite/cek_langsung.py --banding` (jalur server asli, in-process, tanpa HP). "
            f"Tiap model dipaksa sendirian: 6 kasus x {PUTARAN} putaran = {6 * PUTARAN} panggilan, jeda >= {JEDA_S} dtk, anggaran per panggilan "
            "`batas_waktu_s` dari config.yaml. Gambar: `tes_bersih.jpg` / `tes_banner.jpg` (tanpa orang). Aturan 1-7 sama persis dengan `hasil_app.md`.",
+           "Aturan 8 (Mufid, ditulis sebelum hasil): (8a) kasus a dan b: mobil atau kerucut di KIRI disebut \"dekat\" di minimal 3 dari 4 "
+           "putaran; (8b) tidak ada klaim keadaan permukaan di jawaban mana pun.",
            "Groq: `reasoning_effort=\"none\"` (berpikir mati), `reasoning_format=\"hidden\"`, `response_format` json_schema strict (field `jawaban`), "
            "`max_completion_tokens=300`, `temperature=0.3`, instruksi sistem sama dengan Gemini.", "",
            "## Aturan urutan (ditulis sebelum hasil)", "",
-           "Di antara model yang lulus aturan 1, 2, 3, 6, 7: median latensi terendah pertama, lainnya mengikuti. Gagal salah satu: tidak dipakai. "
+           "Di antara model yang lulus aturan 1, 2, 3, 6, 7, 8: median latensi terendah pertama, lainnya mengikuti. Gagal salah satu: tidak dipakai. "
            "Hanya kehabisan waktu (dan jawaban yang datang tidak melanggar): \"tidak konklusif\", paling belakang.", "",
            "## Ringkasan", ""] + KEPALA_TABEL + [baris_tabel(m) for m in semua] + [""]
     for m in semua:
@@ -423,7 +582,7 @@ def tulis_banding(semua):
             ("`" + " -> ".join(m["nama"] for m in rantai) + "`") if rantai else "Tidak ada model yang memenuhi aturan; rantai tidak diubah.", ""]
     for m in semua:
         out += [f"## Model `{m['nama']}`", ""]
-        out += [f"- Aturan {i}: {'LULUS' if m['r'][i] else 'GAGAL'}. " + "; ".join(m["rincian"][i]) for i in range(1, 8)] + [""]
+        out += [f"- Aturan {i}: {'LULUS' if m['r'][i] else 'GAGAL'}. " + "; ".join(m["rincian"][i]) for i in range(1, 9)] + [""]
         for kode, ucapan, berkas in KASUS:
             out.append(f"**{kode}. {KET[kode]}**")
             for h in (x for x in m["hasil"] if x["kode"] == kode):
@@ -442,7 +601,7 @@ async def jalankan_banding(daftar):
         nama = f"{penyedia}:{model}"
         print(f"\n===== {nama} mulai {jam_wib():%H:%M:%S} WIB =====", flush=True)
         z, hasil = await utama(model_paksa=(penyedia, model))
-        r, rincian, med = nilai(hasil)
+        r, rincian, med = nilai_banding(hasil)
         m = dict(nama=nama, hasil=hasil, r=r, rincian=rincian, med=med, golongan=golongkan(hasil, r), kuota=z.kuota.get(penyedia) or {})
         semua.append(m)
         KELUAR_BANDING.with_suffix(".sebagian.md").write_text(tulis_banding(semua), encoding="utf-8")

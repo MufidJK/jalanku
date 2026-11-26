@@ -38,8 +38,9 @@ MAKS_SESI_DETEKSI = 50        # jumlah sesi yang disimpan deteksinya; yang terla
 MAKS_OBJEK_DETEKSI = 8        # objek per sesi yang masuk ke prompt
 MAKS_PIKSEL = 30_000_000      # tolak gambar dengan piksel lebih dari ini sebelum didecode penuh
 # Galat penyedia yang boleh berpindah ke model berikutnya di rantai: waktu habis, padat/kuota (429), galat server
-# (5xx), dan galat tanpa kode HTTP (jaringan putus). 400 (permintaan kita salah), 401/403 (kunci), 404, dan hasil
-# penjaga kita (klaim-aman, bocor, json) tidak pernah berpindah model.
+# (5xx), dan galat tanpa kode HTTP (jaringan putus). 404 (model tidak ada di penyedia) dan 400 "model_decommissioned"
+# dari Groq (model dicabut) juga berpindah, dan entri itu tidak dicoba lagi sampai server dimulai ulang. 400 lain
+# (permintaan kita salah), 401/403 (kunci), dan hasil penjaga kita (klaim-aman, bocor, json) tidak pernah berpindah model.
 # Nama model: "nama" atau "pemilik/nama" (Groq), tanpa "..".
 POLA_NAMA_MODEL = re.compile(r"(?=.{1,60}$)[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)?")
 PENYEDIA_KUNCI = {"gemini": "GEMINI_API_KEY", "groq": "GROQ_API_KEY"}    # penyedia -> nama kunci di .env
@@ -369,11 +370,23 @@ class PenyediaGemini(Penyedia):
 
 class GalatGroq(Exception):
     """Galat HTTP Groq. code = status HTTP, None bila badan respons tidak terbaca (diperlakukan seperti jaringan).
-    Badan galat sengaja tidak disimpan: bisa memuat isi permintaan."""
+    Badan galat sengaja tidak disimpan: bisa memuat isi permintaan. dicabut: 400 itu berarti modelnya sudah dicabut."""
 
-    def __init__(self, code=None):
+    def __init__(self, code=None, dicabut=False):
         super().__init__(f"Groq HTTP {code}" if code else "Groq: respons tidak terbaca")
         self.code = code
+        self.dicabut = dicabut
+
+
+def _groq_model_dicabut(r):
+    """Groq menjawab model yang sudah dicabut dengan 400 error.code="model_decommissioned" (bukan 404).
+    Hanya kode galat itu yang dibaca dari badan."""
+    if r.status_code != 400:
+        return False
+    try:
+        return r.json()["error"]["code"] == "model_decommissioned"
+    except (ValueError, KeyError, TypeError):
+        return False
 
 
 class PenyediaGroq(Penyedia):
@@ -427,7 +440,7 @@ class PenyediaGroq(Penyedia):
                     ulang_sementara = False
                     await asyncio.sleep(0.4)
                     continue
-                raise GalatGroq(r.status_code)
+                raise GalatGroq(r.status_code, _groq_model_dicabut(r))
             try:
                 isi = r.json()["choices"][0]["message"]["content"]
             except (ValueError, KeyError, IndexError, TypeError):
@@ -600,6 +613,7 @@ class Zanite:
         self._garam = secrets.token_hex(8)      # untuk hash sesi di log (berganti tiap server mulai)
         self._gagal = {}                        # pemutus sirkuit (di memori): Entri -> gagal berturut-turut
         self._lewati_sampai = {}                # Entri -> jam (self.jam) sampai kapan entri itu dilewati
+        self._hilang = set()                    # Entri yang modelnya tidak ada: tidak dicoba lagi sampai server dimulai ulang
         self.dir_log_hp = Path(dir_log_hp) if dir_log_hp else None
         self._berkas_log_hp = OrderedDict()     # hash sesi -> berkas (satu berkas per sesi)
         self._unggah_terakhir = OrderedDict()   # hash sesi -> jam unggahan terakhir yang diterima
@@ -611,6 +625,10 @@ class Zanite:
     def _rantai_pakai(self):
         """Entri rantai yang penyedianya tersedia (kunci ada)."""
         return [e for e in self.pengaturan.rantai if self._penyedia_untuk(e.penyedia) is not None]
+
+    def _rantai_tersedia(self):
+        """_rantai_pakai tanpa entri yang modelnya tidak ada di penyedia (404 / dicabut)."""
+        return [e for e in self._rantai_pakai() if e not in self._hilang]
 
     @property
     def siap(self):
@@ -859,7 +877,7 @@ class Zanite:
     @staticmethod
     def _boleh_ganti_model(e):
         """Galat yang boleh berpindah ke model berikutnya: 429, 5xx, atau tanpa kode HTTP (jaringan).
-        400/401/403/404 dan kode lain berhenti di sini."""
+        400/401/403 dan kode lain berhenti di sini. (404 dan model dicabut ditangani terpisah: lihat _model_hilang.)"""
         kode = getattr(e, "code", None)
         return (kode == 429 or 500 <= kode < 600) if isinstance(kode, int) else True
 
@@ -867,11 +885,14 @@ class Zanite:
         """Coba entri rantai berurutan dalam anggaran TOTAL batas_waktu_s. Entri yang masih punya penerus dibatasi
         batas_model_utama_s; entri terakhir yang bisa dicoba memakai SISA anggaran. Entri sesudah yang pertama dicoba
         dilewati bila sisa < sisa_min_cadangan_s. Entri yang pemutusnya terbuka dilewati; bila SEMUA terbuka, entri
-        terakhir tetap dicoba. Hanya galat/batas waktu penyedia yang berpindah model; hasil penjaga kita (dicek
+        terakhir tetap dicoba. Entri yang modelnya tidak ada (404 / dicabut) tidak ikut sampai server dimulai ulang.
+        Hanya galat/batas waktu penyedia yang berpindah model; hasil penjaga kita (dicek
         sesudah ini) bersifat final.
         Mengembalikan (teks mentah | None, model yang menjawab | None, alasan galat terakhir | None, percobaan)."""
         cfg = self.pengaturan
-        rantai = self._rantai_pakai()
+        rantai = self._rantai_tersedia()
+        if not rantai:
+            return None, None, "model-tidak-ada", []
         mulai = time.perf_counter()
         galat, coba, dicoba = "waktu-habis", [], 0
         lewati = [self._sisa_lewati(e) for e in rantai]
@@ -900,6 +921,10 @@ class Zanite:
             except Exception as err:
                 galat = self._nama_galat(err)
                 coba.append(f"{e.model}:{galat}")
+                sebab = "404" if getattr(err, "code", None) == 404 else "400 model_decommissioned" if getattr(err, "dicabut", False) else None
+                if sebab:
+                    self._model_hilang(e, sebab)
+                    continue
                 if not self._boleh_ganti_model(err):
                     break                         # 400 dkk: bukan tanda model sakit, tidak dihitung
                 self._entri_gagal(e)
@@ -909,10 +934,16 @@ class Zanite:
             return mentah, e.model, None, coba
         return None, None, galat, coba
 
+    def _model_hilang(self, e, sebab="404"):
+        """Model tidak ada di penyedia (dicabut atau salah nama). Dicatat sekali; entri tidak dicoba lagi."""
+        if e not in self._hilang:
+            self._hilang.add(e)
+            catat(f"{time.strftime('%H:%M:%S')} jenis=model-hilang {e.penyedia}:{e.model} ({sebab}): tidak dicoba lagi sampai server dimulai ulang")
+
     # ---- pemutus sirkuit per entri (di memori)
 
     def _pemutus_aktif(self):
-        return self.pengaturan.lewati_utama_setelah_gagal > 0 and len(self._rantai_pakai()) > 1   # satu entri: tidak ada tujuan lewat
+        return self.pengaturan.lewati_utama_setelah_gagal > 0 and len(self._rantai_tersedia()) > 1   # satu entri: tidak ada tujuan lewat
 
     def _sisa_lewati(self, e):
         """Detik tersisa entri ini dilewati; 0 bila tidak dilewati."""

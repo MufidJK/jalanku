@@ -2,9 +2,10 @@
 // Aturan keputusan murni ada di zanite-aturan.js; pencocok kata bangun di zanite-cocok.js (salinan spike).
 //
 // Aturan utama: mic TIDAK PERNAH dimatikan agar tidak mendengar suara app sendiri (setiap buka ulang,
-// Android membunyikan suara Asisten Google). Dari AWAL tiap transkrip dibuang kata-kata yang cocok dengan ucapan
-// app 60 detik terakhir (gema: peringatan, pesan sistem, balasan dan jawaban Zanite); hanya sisanya (suara pengguna)
-// yang diteruskan ke pencocok kata bangun dan jendela perintah. Penjaga kedua terhadap bangun sendiri: aturan kata
+// Android membunyikan suara Asisten Google). Pada hasil yang kata pertamanya datang saat app bicara (atau dalam ekor
+// TAIL_MS), dari AWAL tiap transkripnya dibuang kata-kata yang cocok dengan ucapan app 60 detik terakhir (gema:
+// peringatan, pesan sistem, balasan dan jawaban Zanite); hanya sisanya (suara pengguna) yang diteruskan ke pencocok
+// kata bangun dan jendela perintah. Hasil yang mulai saat hening diteruskan utuh. Penjaga kedua terhadap bangun sendiri: aturan kata
 // bangun yang ketat (varian sendirian, diam 800/1200 ms).
 //
 // Fokus Zanite: hanya selama pengguna bicara, yaitu sejak kata bangun sampai perintah tertangkap (kirimPerintah
@@ -41,11 +42,12 @@
   const TUNGGU_T3_MS = 4000;        // balasan menunggu ucapan lain (tingkat 3) paling lama sekian ms
   const FOKUS_MAKS_MS = 12000;      // batas keras fokus Zanite sejak kata bangun (balasan ~3 dtk + jendela 6 dtk + sisa)
   const BARIS_MAKS = 500;             // satu baris log paling panjang sekian karakter
+  const UMUR_KUNCI_MS = 120000;       // catatan "hasil ini mulai saat app bicara?" dibuang sesudah sekian ms tanpa pembaruan
   const UNGGAH_MS = 60000;            // log diunggah ke server tiap sekian ms selama Zanite hidup
   const UNGGAH_JARAK_MS = 20000;      // batas server: 1 unggahan per sekian ms per sesi
   const UNGGAH_MAKS_BYTE = 190000;    // batas server 200 KB
   const BEACON_MAKS_BYTE = 60000;     // sendBeacon/keepalive browser dibatasi 64 KB
-  const VERSI = "zanite-app-5";
+  const VERSI = "zanite-app-6";
 
   const daftar = ZC.parseDaftar(ZC.DAFTAR_AWAL);
   const sendiriSaja = ZC.parseDaftar(ZC.SENDIRI_SAJA_AWAL);
@@ -77,6 +79,7 @@
   let hasilDiJendela = 0;          // hasil yang datang sejak jendela perintah dibuka
   let cekPengenalTimer = null, tDenyut = -Infinity;
   const gemaPerKunci = new Map();  // kunci hasil -> waktu: hasil yang dibuang sebagai gema
+  const awalKunci = new Map();     // kunci hasil -> { bicara: app bicara saat kata pertamanya datang, t: pembaruan terakhir }
   let unggahTimer = null, pernahHidup = false;
   const tUnggah = new Map(), unggahTunda = new Map();   // sesi -> waktu unggah terakhir / pengatur waktu tunda
   const catatan = new Map();  // kunci hasil Chrome -> { teks, final, tPertama, tAkhir }
@@ -305,7 +308,12 @@
       hasilDiJendela += 1;
       for (let j = 1; j < r.length; j++) debug("alt" + j + ": " + r[j].transcript);   // alternatif hanya dicatat
       const bicara = sedangBicara();       // juga menyegarkan pelacak sebelum teks app dibaca
-      const sisa = ZA.sisaSetelahGema(mentah, pelacak.teksBicara(), pelacak.teksSedang());
+      // Hanya hasil yang kata PERTAMANYA datang saat app bicara yang bisa memuat gema di awalnya.
+      let awal = awalKunci.get(key);
+      if (!awal) { awal = { bicara }; awalKunci.set(key, awal); }
+      awal.t = jam();
+      for (const [k, v] of awalKunci) if (jam() - v.t > UMUR_KUNCI_MS) awalKunci.delete(k);
+      const sisa = awal.bicara ? ZA.sisaSetelahGema(mentah, pelacak.teksBicara(), pelacak.teksSedang()) : mentah;
       if (!sisa) {
         hitung.gemaDibuang += 1;
         gemaPerKunci.set(key, jam());
@@ -662,6 +670,7 @@
     rec = null;
     P = null;
     catatan.clear();
+    awalKunci.clear();
     if (tadinyaHidup) unggahLog();       // Berhenti dan jedaOtomatis: simpan log di server
   }
 

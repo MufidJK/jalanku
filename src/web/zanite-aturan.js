@@ -68,7 +68,8 @@
   // ---- penyaring gema. Chrome menggabung ucapan app dan ucapan pengguna ke SATU hasil yang terus tumbuh, jadi
   // gema tidak bisa dinilai per transkrip utuh. Gema dibuang kata demi kata dari AWAL transkrip selama bisa dijelaskan
   // oleh teks ucapan app yang baru-baru ini berbunyi; sisanya (suara pengguna) yang diteruskan. Kata sesudah suara
-  // pengguna tidak pernah disentuh.
+  // pengguna tidak pernah disentuh. Dipakai pemanggil HANYA untuk hasil yang kata pertamanya datang saat app bicara
+  // (atau dalam ekornya); hasil yang mulai saat hening tidak pernah dipotong.
   //  - satu potongan = kata berurutan di dalam SATU teks app; potongan boleh sambung-menyambung;
   //  - potongan pertama boleh mulai di tengah kalimat (mic mulai mendengar di tengah); potongan berikutnya harus
   //    mulai di awal sebuah kalimat app, atau panjangnya >= 2 kata (satu kata yang kebetulan sama tidak ikut dimakan);
@@ -222,6 +223,10 @@
     };
   }
 
+  // Kata seru / pengisi: "perintah" yang isinya hanya ini diabaikan, jendela terus menunggu.
+  const PENGISI = new Set(["oh", "eh", "hmm", "ya", "nah", "oke", "ok", "hah", "ha"]);
+  const hanyaPengisi = (teks) => token(teks).every((w) => PENGISI.has(w));
+
   // ---- jendela perintah. Tanpa timer: pemanggil menjadwalkan jatuhTempo() lalu memanggil periksa().
   // opsi: t (waktu buka), bukaMs (6000), diamTanyaMs, diamJelaskanMs, setelahFinalMs, maksBicaraMs,
   // gema(cmd) -> true bila "perintah" itu hanya gema balasan app (diabaikan)
@@ -238,8 +243,8 @@
       terima(t, key, teks, final) {
         if (S.selesai) return;
         let cmd = ambilPerintah(teks);
-        if (cmd !== null && o.gema && o.gema(cmd)) cmd = null;
-        if (cmd === null) { entri.delete(key); }   // hanya kata bangun: bukan perintah
+        if (cmd !== null && (hanyaPengisi(cmd) || (o.gema && o.gema(cmd)))) cmd = null;
+        if (cmd === null) { entri.delete(key); }   // hanya kata bangun / pengisi / gema balasan: bukan perintah
         else entri.set(key, { cmd, final: !!final });
         const baru = gabung();
         if (!baru) { S.cmd = ""; S.pertama = null; S.ubah = null; return; }   // ditarik kembali: jangan kirim kosong

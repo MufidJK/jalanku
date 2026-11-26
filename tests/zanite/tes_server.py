@@ -853,8 +853,8 @@ async def tes_model_cadangan_macet_dan_anggaran():
 
 
 async def tes_model_cadangan_tidak_berpindah():
-    # 400 / 401 / 403 / 404: berhenti, tanpa cadangan
-    for kode in (400, 401, 403, 404):
+    # 400 / 401 / 403: berhenti, tanpa cadangan (404 = model tidak ada, lihat tes_model_hilang_404)
+    for kode in (400, 401, 403):
         d = dunia_model({M0: PenyediaPalsu(galat=GalatApi(kode, "salah")), M1: PenyediaPalsu(OKJ), M2: PenyediaPalsu(OKJ)})
         j, dt = await satu(d)
         cek(j["jenis"] == "cadangan" and j["alasan"] == f"penyedia-GalatApi-{kode}" and j["model"] is None and d.p.urutan == [M0], f"{kode} tidak berpindah: {j} {d.p.urutan}")
@@ -1305,7 +1305,9 @@ async def tes_alasan_dan_berkas_log():
         cek(all(re.match(r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d ", b) for b in baris), f"berkas log: tanpa tanggal+jam: {baris[:2]}")
         cek(all("jenis=" in b and "sesi=" in b for b in baris), "berkas log: bentuk baris")
         cek("jenis=cadangan penjaga=waktu-habis" in isi and "penjaga=penyedia-GalatApi-429" in isi and "penjaga=klaim-aman" in isi, "berkas log: kode alasan tidak tercatat")
-        cek(not any(x in isi for x in ("RAHASIAGALAT", KUNCI_PALSU, "MARKERUCAPAN", "MARKERJAWABAN", "sesi=a1", "testserver", "10.0.0.1")), "berkas log: ada rahasia/ucapan/jawaban/alamat")
+        cek(not any(x in isi for x in ("RAHASIAGALAT", KUNCI_PALSU, "MARKERUCAPAN", "MARKERJAWABAN", "testserver", "10.0.0.1")), "berkas log: ada rahasia/ucapan/jawaban/alamat")
+        # sesi mentah tidak tercatat: tiap "sesi=" adalah hash 8 heksa (hash acak boleh saja berawalan "a1")
+        cek(all(re.fullmatch(r"[0-9a-f]{8}", v) for v in re.findall(r"sesi=(\S+)", isi)), "berkas log: sesi mentah tercatat")
         # isi berkas sama dengan baris di konsol (sesudah tanggal)
         konsol = LOG.semua()
         cek(all(b.split(" ", 1)[1] in konsol for b in baris[:5]), "berkas log: beda dengan konsol")
@@ -1323,6 +1325,105 @@ async def tes_akhir_satu_baris_log_tanpa_galat():
         r = await tanya(k)
     cek(r.status_code == 200 and inti(r.json()) == {"jawaban": Z.CADANGAN, "jenis": "cadangan"} and "Traceback" not in r.text, f"jaring terakhir: {r.status_code} {r.text}")
     cek("galat-TypeError" in LOG.semua(), "jaring terakhir: tidak tercatat")
+
+
+async def tes_model_hilang_404():
+    # 404 pada entri pertama: pindah ke berikutnya, dicatat sekali, tidak dicoba lagi walau jam maju jauh
+    jam = Jam()
+    d = dunia_model({M0: PenyediaPalsu(galat=GalatApi(404, "RAHASIAGALAT")), M1: PenyediaPalsu(OKJ), M2: PenyediaPalsu(OKJ)}, jam=jam)
+    j, dt = await satu(d, "h1")
+    log = LOG.semua()
+    cek(j["jenis"] == "jawaban" and j["model"] == M1 and d.p.urutan == [M0, M1], f"404: berpindah {j} {d.p.urutan}")
+    cek(log.count("jenis=model-hilang") == 1 and f"gemini:{M0} (404)" in log and "RAHASIAGALAT" not in log, f"404: dicatat {log!r}")
+    cek(f"coba={M0}:penyedia-GalatApi-404,{M1}:ok" in log, f"404: coba {log!r}")
+    for n in range(2):
+        jam.t += 100000
+        j, dt = await satu(d, f"h{n + 2}")
+    cek(j["model"] == M1 and d.p.urutan.count(M0) == 1 and "model-hilang" not in LOG.semua() and M0 not in LOG.semua(), f"404: tidak dicoba lagi {d.p.urutan} {LOG.semua()!r}")
+    cek(d.z.siap and d.z._rantai_tersedia() == [Z.Entri("gemini", M1), Z.Entri("gemini", M2)], f"404: rantai tersisa {d.z._rantai_tersedia()}")
+    # server dimulai ulang (objek baru): dicoba lagi
+    d = dunia_model({M0: PenyediaPalsu(OKJ), M1: PenyediaPalsu(OKJ), M2: PenyediaPalsu(OKJ)})
+    j, dt = await satu(d, "h-baru")
+    cek(j["model"] == M0, f"404: sesudah mulai ulang dicoba lagi {j}")
+
+    # 404 pada entri terakhir: kalimat cadangan sekarang; sesudahnya entri sebelumnya menjadi yang terakhir (boleh ulang)
+    d = dunia_model({M0: PenyediaPalsu(galat=GalatApi(503, "x")), M1: PenyediaPalsu(galat=GalatApi(503, "x")), M2: PenyediaPalsu(galat=GalatApi(404, "x"))},
+                    lewati_utama_setelah_gagal=0)
+    j, dt = await satu(d, "h-akhir")
+    cek(j["jenis"] == "cadangan" and j["alasan"] == "penyedia-GalatApi-404" and d.p.urutan == [M0, M1, M2], f"404 terakhir: {j}")
+    d.p.ulang.clear()
+    j, dt = await satu(d, "h-akhir2")
+    cek(j["alasan"] == "penyedia-GalatApi-503" and d.p.ulang == [False, True] and d.p.urutan[-2:] == [M0, M1], f"404 terakhir lalu: {j} {d.p.ulang}")
+
+    # semua 404: tidak ada lagi yang dipanggil, alasan sendiri
+    d = dunia_model({m: PenyediaPalsu(galat=GalatApi(404, "x")) for m in (M0, M1, M2)})
+    j, dt = await satu(d, "h-semua")
+    cek(j["jawaban"] == Z.CADANGAN and d.p.urutan == [M0, M1, M2] and LOG.semua().count("jenis=model-hilang") == 3, f"semua 404: {j}")
+    j, dt = await satu(d, "h-semua2")
+    cek(j["jawaban"] == Z.CADANGAN and j["alasan"] == "model-tidak-ada" and j["model"] is None and len(d.p.urutan) == 3, f"semua 404 lalu: {j} {d.p.urutan}")
+
+    # entri sehat yang tinggal satu mendapat SELURUH anggaran (tidak dipotong batas_model_utama_s)
+    d = Dunia(PenyediaPerModel({M0: PenyediaPalsu(OKJ), M1: PenyediaPalsu(OKJ, tidur=0.5)}),
+              rantai=rt(M1, M0), batas_waktu_s=1.5, batas_model_utama_s=0.2, per_menit_per_klien=100, per_menit_global=100)
+    d.z._model_hilang(Z.Entri("gemini", M0))
+    j, dt = await satu(d, "h-sisa")
+    cek(j["model"] == M1 and d.p.urutan == [M1], f"satu entri tersisa: {j} {d.p.urutan}")
+
+    # Groq asli (transport palsu): 404 -> Gemini menjawab, Groq tidak dihubungi lagi
+    pg, permintaan = groq_palsu(404)
+    d = dunia_groq(pg)
+    j, dt = await satu(d, "h-groq")
+    cek(j["model"] == M1 and f"groq:{GQ} (404)" in LOG.semua() and "MARKERGALAT" not in LOG.semua() and KUNCI_GROQ not in LOG.semua(), f"groq 404: {j} {LOG.semua()!r}")
+    j, dt = await satu(d, "h-groq2")
+    cek(j["model"] == M1 and len(permintaan) == 1, f"groq 404: tidak dicoba lagi ({len(permintaan)})")
+
+    # SDK Gemini asli (transport palsu): galat 404 membawa .code == 404
+    from google import genai
+    from google.genai import types as gt
+    tubuh = {"error": {"code": 404, "message": "models/x is not found", "status": "NOT_FOUND"}}
+    klien = genai.Client(api_key=KUNCI_PALSU, http_options=Z.opsi_http_gemini(gt, httpx_async_client=httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(404, json=tubuh)))))
+    gem = Z.PenyediaGemini(KUNCI_PALSU, M0, client=klien)
+    pg, permintaan = groq_palsu(OKJ)
+    d = Dunia({"gemini": gem, "groq": pg}, rantai=rt(M0) + rt(GQ, penyedia="groq"), per_menit_per_klien=100, per_menit_global=100)
+    j, dt = await satu(d, "h-sdk")
+    cek(j["model"] == GQ and d.z._hilang == {Z.Entri("gemini", M0)}, f"sdk gemini 404: {j} {d.z._hilang}")
+
+
+async def tes_groq_model_dicabut():
+    def galat(status, kode):
+        return httpx.Response(status, json={"error": {"message": f"MARKERGALAT {KUNCI_GROQ}", "type": "invalid_request_error", "code": kode}})
+
+    # 400 model_decommissioned = sama dengan 404: pindah, dicatat sekali, tidak dicoba lagi
+    pg, permintaan = groq_palsu(galat(400, "model_decommissioned"))
+    gem = PenyediaPalsu(OKJ)
+    d = dunia_groq(pg, gem, jam=Jam())
+    j, dt = await satu(d, "mc1")
+    log = LOG.semua()
+    cek(j["jenis"] == "jawaban" and j["model"] == M1 and len(permintaan) == 1, f"dicabut: berpindah {j}")
+    cek(log.count("jenis=model-hilang") == 1 and f"groq:{GQ} (400 model_decommissioned)" in log, f"dicabut: dicatat {log!r}")
+    cek(f"coba={GQ}:penyedia-GalatGroq-400,{M1}:ok" in log and "MARKERGALAT" not in log and KUNCI_GROQ not in log, f"dicabut: log {log!r}")
+    d.z.jam.t += 100000
+    j, dt = await satu(d, "mc2")
+    cek(j["model"] == M1 and len(permintaan) == 1 and d.z._hilang == {Z.Entri("groq", GQ)} and "model-hilang" not in LOG.semua(), f"dicabut: tidak dicoba lagi ({len(permintaan)})")
+
+    # satu-satunya entri: kalimat cadangan, sesudahnya tidak ada panggilan lagi
+    pg, permintaan = groq_palsu(galat(400, "model_decommissioned"))
+    d = Dunia({"groq": pg}, rantai=rt(GQ, penyedia="groq"), per_menit_per_klien=100, per_menit_global=100)
+    j, dt = await satu(d, "mc-satu")
+    cek(j["jawaban"] == Z.CADANGAN and j["alasan"] == "penyedia-GalatGroq-400" and len(permintaan) == 1, f"dicabut, satu entri: {j}")
+    j, dt = await satu(d, "mc-satu2")
+    cek(j["alasan"] == "model-tidak-ada" and len(permintaan) == 1, f"dicabut, satu entri, kedua: {j}")
+
+    # 400 lain, 401/403 (juga dengan kode yang sama), dan badan yang tidak terbaca: tetap final, entri tidak ditandai
+    for nama, respons in (("400-lain", galat(400, "invalid_request_error")), ("400-tanpa-kode", httpx.Response(400, json={"error": {}})),
+                          ("400-bukan-json", httpx.Response(400, content=b"<html>")), ("400-error-teks", httpx.Response(400, json={"error": "x"})),
+                          ("400-daftar", httpx.Response(400, json=["x"])), ("401", galat(401, "model_decommissioned")),
+                          ("403", galat(403, "model_decommissioned"))):
+        pg, permintaan = groq_palsu(respons)
+        gem = PenyediaPalsu(OKJ)
+        d = dunia_groq(pg, gem)
+        j, dt = await satu(d, "mc-" + nama)
+        cek(j["jawaban"] == Z.CADANGAN and not gem.panggilan and not d.z._hilang and "model-hilang" not in LOG.semua(), f"{nama}: final {j} {d.z._hilang}")
 
 
 # ---------------------------------------------------------------- Groq (klien palsu: transport HTTP tanpa jaringan)
@@ -1426,7 +1527,7 @@ async def tes_groq_galat_berpindah():
 
 
 async def tes_groq_hasil_final():
-    for kode in (400, 401, 403, 404, 413):
+    for kode in (400, 401, 403, 413):
         pg, permintaan = groq_palsu(kode)
         gem = PenyediaPalsu(OKJ)
         d = dunia_groq(pg, gem)
@@ -1469,7 +1570,7 @@ async def tes_log_hp():
         d = Dunia(jam=jam)
         d.z.dir_log_hp = folder
         H = {"Content-Type": "text/plain;charset=UTF-8"}
-        isi = "== LOG ZANITE ==\nversi: zanite-app-5\nMARKERLOGHP é"
+        isi = "== LOG ZANITE ==\nversi: zanite-app-6\nMARKERLOGHP é"
         LOG.teks.clear()
         async with d.klien() as k:
             kirim = lambda badan, sesi="hp1", **h: k.post(f"/api/zanite/log?sesi={sesi}", content=badan, headers={**H, **h})

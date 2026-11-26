@@ -325,6 +325,26 @@ cek("ambilPerintah: ulangan dibuang", ZA.ambilPerintah("Janet Janet") === null &
   cek("gema balasan sesudah kata bangun: bukan perintah", g.teks() === "" && g.jatuhTempo() === 6000, g.teks());
 }
 
+// ---- jendela: sisa yang hanya kata seru diabaikan
+{
+  for (const t of ["oh", "eh", "hmm", "ya", "nah", "oke", "ok", "hah", "ha", "Oh, ya.", "hah ha oke", "Janet oh", "..."]) {
+    const w = ZA.buatJendela({ t: 0 });
+    w.terima(1000, "a", t, true);
+    cek("kata seru diabaikan: " + t, w.teks() === "" && w.periksa(2000) === null && w.jatuhTempo() === 6000, [w.teks(), w.jatuhTempo()]);
+  }
+  for (const t of ["ya jelaskan sekitar", "oh itu apa", "apa", "iya", "oke lanjut"]) {
+    const w = ZA.buatJendela({ t: 0 });
+    w.terima(1000, "a", t, true);
+    cek("bukan hanya kata seru: " + t, w.teks() === t, w.teks());
+  }
+  const w = ZA.buatJendela({ t: 0 });
+  w.terima(1000, "a", "ya", false); w.terima(1400, "a", "ya jelaskan sekitar", false);
+  cek("hasil yang tumbuh dari kata seru menjadi perintah: dikirim utuh", w.teks() === "ya jelaskan sekitar" && w.jatuhTempo() === 2100, [w.teks(), w.jatuhTempo()]);
+  const x = ZA.buatJendela({ t: 0 });
+  x.terima(1000, "a", "oh", true); x.terima(1500, "b", "jelaskan sekitar", true);
+  cek("kata seru di hasil lain tidak ikut ke perintah", x.teks() === "jelaskan sekitar", x.teks());
+}
+
 // ---- pelacak: teks ucapan (bahan gema) dan tingkat 3
 {
   let t = 0; const p = ZA.buatPelacakBicara(() => t, 500);
