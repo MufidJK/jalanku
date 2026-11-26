@@ -309,6 +309,47 @@ for (const t of ["", "   ", "Zanite", "janet", "jani", "Danis", "eh zanite", "za
   cek("potonganDari: pertanyaan pengguna bukan gema", !ZA.potonganDari("ada tangga di depan", BALAS, 3) && !ZA.potonganDari("iya ada", BALAS, 3));
 }
 
+// ---- gema yang salah dengar (log HP 5, zanite-app-6)
+{
+  const HH = "Hati-hati, jalur tidak terlihat";
+  const JAWAB = "Di depan Anda, dekat, ada lemari kayu berwarna cokelat dengan tulisan sahabat dan stiker bunga. Di sisi kiri lemari, dekat, terlihat laci plastik berwarna biru dan kuning.";
+  const sama = (nama, t, harap, app, s) => { const h = ZA.sisaSetelahGema(t, app, s); cek(nama, h === harap, h); };
+
+  sama("log 5: 'tidak' terdengar 'pindah': gema penuh", "hati-hati jalur pindah terlihat", "", [HH]);
+  sama("log 5: disusul peringatan berikutnya: tetap gema penuh", "hati-hati jalur pindah terlihat hati-hati jalur tidak terlihat", "", [HH]);
+  sama("log 5: 'cokelat' ditulis 'coklat': seluruh jawaban + peringatan gema",
+    "di depan Anda dekat ada lemari kayu berwarna coklat dengan tulisan sahabat dan stiker bunga di sisi kiri lemari dekat terlihat laci plastik berwarna biru dan kuning hati-hati jalur tidak terlihat",
+    "", [JAWAB, HH]);
+  sama("interim 'coklat' yang belum utuh", "ada lemari kayu berwarna cokl", "", [JAWAB]);
+  sama("'Janet' sesudah peringatan tetap tersisa", "hati-hati jalur tidak terlihat Janet", "Janet", [HH]);
+  sama("'Janet' sesudah gema yang salah dengar tetap tersisa", "hati-hati jalur pindah terlihat Janet", "Janet", [HH]);
+  sama("teman saya Janet saat app bicara: tidak disentuh", "teman saya Janet", "teman saya Janet", [HH, JAWAB], [JAWAB]);
+
+  // jarak edit: 4-6 huruf boleh 1, 7+ boleh 2, <= 3 huruf harus persis
+  sama("4-6 huruf, 1 beda", "jalam terlihat", "", ["jalan terlihat"]);
+  sama("4-6 huruf, 2 beda: bukan gema", "dekat", "dekat", ["depan"]);
+  sama("7+ huruf, 2 beda", "terhalamg sekalih", "", ["terhalang sekali"]);
+  sama("7+ huruf, 3 beda: bukan gema", "terpakir", "terpakir", ["terhalang"]);
+  sama("3 huruf, 1 beda: bukan gema", "ada", "ada", ["apa"]);
+  sama("huruf berulang dirapatkan", "maaf saat", "", ["maf sat"]);
+  sama("pasangan ejaan", "silahkan antri", "", ["silakan antre"]);
+  sama("kata gabung vs dua kata", "hatihati jalur", "", [HH]);
+  sama("dua kata vs kata gabung", "tempat sampah di kiri", "", ["Tempatsampah di kiri"]);
+
+  // satu kata tak cocok: hanya bila diapit kata yang cocok, dan hanya satu per potongan
+  sama("kata tak cocok di ujung: tersisa", "hati-hati jalur pindah", "pindah", [HH]);
+  sama("dua kata tak cocok berurutan: tersisa", "hati-hati jalur pindah sekali terlihat", "pindah sekali terlihat", [HH]);
+  sama("kata tak cocok kedua dalam satu potongan tidak dilewati", "satu merah tiga hijau lima", "hijau lima", ["satu dua tiga empat lima"]);
+
+  // kata bangun tidak pernah dianggap gema kecuali teks app memuatnya
+  sama("varian tidak dilewati sebagai kata tak cocok", "hati-hati jalur Janet terlihat", "Janet terlihat", [HH]);
+  sama("varian tidak cocok secara fuzzy ('sanit' vs 'sakit')", "sanit", "sanit", ["Ada orang sakit"]);
+  sama("varian sendiri-saja tidak cocok secara fuzzy ('jani' vs 'janji')", "ini jani", "jani", ["Ini janji saya"]);
+  sama("varian yang memang ada di teks app: tetap gema", "poster janet", "", ["Ada poster Janet"], ["Ada poster Janet"]);
+  const APP = [HH, JAWAB, "Kendaraan di depan, dekat", "Iya, ada yang bisa saya bantu?"];
+  for (const v of D.concat(SS)) sama("varian tersisa sesudah gema: " + v, "hati-hati jalur tidak terlihat " + v, v, APP, []);
+}
+
 // ---- varian diulang = satu panggilan
 for (const t of ["Janet Janet", "janet janit", "zanite zanite zanite", "halo Janet Janet"]) cek("ulangan sendirian: " + t, kl(t).tipe === "sendiri", kl(t));
 { const k = kl("Janet Janet jelaskan sekitar"); cek("ulangan + perintah", k.tipe === "perintah" && k.cmd === "jelaskan sekitar", k); }

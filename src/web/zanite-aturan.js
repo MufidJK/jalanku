@@ -71,6 +71,11 @@
   // pengguna tidak pernah disentuh. Dipakai pemanggil HANYA untuk hasil yang kata pertamanya datang saat app bicara
   // (atau dalam ekornya); hasil yang mulai saat hening tidak pernah dipotong.
   //  - satu potongan = kata berurutan di dalam SATU teks app; potongan boleh sambung-menyambung;
+  //  - kata dicocokkan dengan toleransi salah dengar Chrome: lihat samaKata();
+  //  - di dalam satu potongan SATU kata boleh tidak cocok, asal kata tepat sebelum dan sesudahnya cocok dengan kata
+  //    app pada posisinya ("jalur pindah terlihat" untuk "jalur tidak terlihat");
+  //  - kata bangun (daftar zanite dan sendiri-saja, termasuk bentuk fuzzy) tidak pernah dianggap gema kecuali teks app
+  //    memang memuat kata itu (persis, atau awalannya saat kata masih tumbuh);
   //  - potongan pertama boleh mulai di tengah kalimat (mic mulai mendengar di tengah); potongan berikutnya harus
   //    mulai di awal sebuah kalimat app, atau panjangnya >= 2 kata (satu kata yang kebetulan sama tidak ikut dimakan);
   //  - kata terpotong (>= 3 huruf, awalan kata app di posisi itu: "kendara", "terha") ikut dihitung;
@@ -79,8 +84,63 @@
   const AWALAN_MIN = 3;
   const LOMPAT_MIN = 2;
 
-  const samaKata = (kata, app) => app !== undefined && (kata === app || (kata.length >= AWALAN_MIN && app.startsWith(kata)));
-  const adalahVarian = (kata) => { const k = ZC.klasifikasi(kata, DAFTAR, true, SENDIRI_SAJA); return !!k && k.tipe === "sendiri"; };
+  // Pasangan ejaan baku/tidak baku: Chrome sering menulis ejaan yang berbeda dari teks yang diucapkan.
+  const PASANGAN_EJAAN = [["cokelat", "coklat"], ["silahkan", "silakan"], ["antri", "antre"], ["praktek", "praktik"],
+    ["apotik", "apotek"], ["aktifitas", "aktivitas"], ["telpon", "telepon"], ["trotoir", "trotoar"]];
+  // tanpa tanda hubung, huruf yang berulang dirapatkan ("maaf" -> "maf")
+  const rapatkan = (kata) => kata.replace(/-/g, "").replace(/(.)\1+/g, "$1");
+  const EJAAN = new Map(PASANGAN_EJAAN.map(([a, b]) => [rapatkan(a), rapatkan(b)]));
+  const ingatanBentuk = new Map();   // disimpan: dipakai berkali-kali untuk tiap hasil interim
+  function bentuk(kata) {
+    let b = ingatanBentuk.get(kata);
+    if (b === undefined) {
+      const r = rapatkan(kata);
+      b = EJAAN.get(r) || r;
+      if (ingatanBentuk.size >= 2000) ingatanBentuk.clear();
+      ingatanBentuk.set(kata, b);
+    }
+    return b;
+  }
+
+  const ingatanVarian = new Map();   // kata -> boolean (dipanggil berkali-kali untuk tiap hasil interim)
+  function adalahVarian(kata) {
+    let v = ingatanVarian.get(kata);
+    if (v === undefined) {
+      const k = ZC.klasifikasi(kata, DAFTAR, true, SENDIRI_SAJA);
+      v = !!k && k.tipe === "sendiri";
+      if (ingatanVarian.size >= 2000) ingatanVarian.clear();
+      ingatanVarian.set(kata, v);
+    }
+    return v;
+  }
+
+  // jarak edit (Levenshtein) <= maks?
+  function dekatEjaan(a, b, maks) {
+    if (Math.abs(a.length - b.length) > maks) return false;
+    let lalu = Array.from({ length: b.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) {
+      const kini = [i];
+      for (let j = 1; j <= b.length; j++) kini[j] = Math.min(lalu[j] + 1, kini[j - 1] + 1, lalu[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (Math.min(...kini) > maks) return false;
+      lalu = kini;
+    }
+    return lalu[b.length] <= maks;
+  }
+
+  // Kata dari pengenal sama dengan kata app? Persis, awalan (>= 3 huruf), sama sesudah dinormalkan, atau jarak edit
+  // <= 1 (kata 4-6 huruf) / <= 2 (7 huruf ke atas), dihitung dari kata yang lebih pendek. Kata bangun: persis/awalan saja.
+  function samaKata(kata, app) {
+    if (app === undefined) return false;
+    if (kata === app || (kata.length >= AWALAN_MIN && app.startsWith(kata))) return true;
+    if (adalahVarian(kata)) return false;
+    const a = bentuk(kata), b = bentuk(app);
+    if (a === b || (kata.length >= AWALAN_MIN && b.startsWith(a))) return true;
+    const pendek = Math.min(kata.length, app.length);
+    const maks = pendek >= 7 ? 2 : pendek >= 4 ? 1 : 0;
+    return maks > 0 && dekatEjaan(a, b, maks);
+  }
+  // satu kata di satu sisi = dua kata di sisi lain ("tempatsampah" / "tempat sampah")
+  const samaGabung = (satu, x, y) => x !== undefined && y !== undefined && !adalahVarian(satu) && bentuk(satu) === bentuk(x + y);
 
   // Kata ternormalisasi + posisinya di teks asli, supaya sisanya dikembalikan dengan huruf dan tanda baca asli.
   function pecah(teks) {
@@ -99,18 +159,31 @@
     const bisa = new Array(kata.length + 1).fill(false);   // bisa[n]: n kata pertama dapat dijelaskan sebagai gema
     bisa[0] = true;
     let habis = 0;
-    for (let i = 0; i < kata.length; i++) {
-      if (!bisa[i]) continue;
-      for (const a of app) {
-        for (let s = 0; s < a.w.length; s++) {
-          for (let l = 1; i + l <= kata.length && samaKata(kata[i + l - 1].k, a.w[s + l - 1]); l++) {
-            if (i > 0 && s > 0 && l < LOMPAT_MIN) continue;
-            if (l === 1 && !a.sedang && adalahVarian(kata[i].k)) continue;
-            bisa[i + l] = true;
-            habis = Math.max(habis, i + l);
-          }
-        }
+    const k = kata.map((x) => x.k), n = k.length;
+    // Telusuri satu potongan: kata transkrip mulai i dicocokkan dengan teks app a mulai posisi s.
+    const telusur = (i, a, s) => {
+      const antre = [[i, s, false]];      // [posisi transkrip, posisi app, sudah memakai satu kata tak cocok]
+      const maju = (t, p, lompat) => {
+        antre.push([t, p, lompat]);
+        if (i > 0 && s > 0 && t - i < LOMPAT_MIN) return;
+        if (t - i === 1 && !a.sedang && adalahVarian(k[i])) return;
+        bisa[t] = true;
+        habis = Math.max(habis, t);
+      };
+      while (antre.length) {
+        const [t, p, lompat] = antre.pop();
+        if (t >= n || p >= a.w.length) continue;
+        let cocok = false;
+        if (samaKata(k[t], a.w[p])) { cocok = true; maju(t + 1, p + 1, lompat); }
+        if (samaGabung(k[t], a.w[p], a.w[p + 1])) { cocok = true; maju(t + 1, p + 2, lompat); }
+        if (t + 1 < n && samaGabung(a.w[p], k[t], k[t + 1])) { cocok = true; maju(t + 2, p + 1, lompat); }
+        // satu kata tak cocok, diapit kata yang cocok; kata bangun tidak pernah dilewati begini
+        if (!cocok && !lompat && t > i && t + 1 < n && !adalahVarian(k[t]) && samaKata(k[t + 1], a.w[p + 1])) maju(t + 2, p + 2, true);
       }
+    };
+    for (let i = 0; i < n; i++) {
+      if (!bisa[i]) continue;
+      for (const a of app) for (let s = 0; s < a.w.length; s++) telusur(i, a, s);
     }
     if (!habis) return asli;
     return habis >= kata.length ? "" : asli.slice(kata[habis].i).trim();
@@ -273,9 +346,9 @@
     };
   }
 
-  // ---- laporan uji untuk "Salin log Zanite". Murni: teks dari angka dan baris yang diberikan pemanggil.
+  // ---- laporan uji untuk "Salin log Zanite" dan unggahan log. Murni: teks dari angka dan baris yang diberikan pemanggil.
   // info: { header: {nama: nilai}, hitung: {nama: nilai | {kunci: nilai}}, baris: [teks] }
-  function susunLaporan(info) {
+  function susunKepala(info) {
     const out = [];
     const nilai = (v) => {
       if (v && typeof v === "object") {
@@ -288,13 +361,15 @@
     for (const [k, v] of Object.entries(info.header || {})) out.push(k + ": " + nilai(v));
     out.push("", "== HITUNGAN ==");
     for (const [k, v] of Object.entries(info.hitung || {})) out.push(k + ": " + nilai(v));
-    const baris = (info.baris || []).slice(-300);
-    out.push("", "== " + baris.length + " BARIS TERAKHIR ==");
-    for (const b of baris) out.push(b);
     return out.join("\n");
   }
 
-  const api = { KATA_SOPAN, siapkanKataSopan, ubahJadi, jenisPerintah, ambilPerintah, buatPelacakBicara, sisaSetelahGema, potonganDari, buatJendela, susunLaporan };
+  function susunLaporan(info) {
+    const baris = (info.baris || []).slice(-300);
+    return [susunKepala(info), "", "== " + baris.length + " BARIS TERAKHIR ==", ...baris].join("\n");
+  }
+
+  const api = { KATA_SOPAN, siapkanKataSopan, ubahJadi, jenisPerintah, ambilPerintah, buatPelacakBicara, sisaSetelahGema, potonganDari, buatJendela, susunKepala, susunLaporan };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.ZaniteAturan = api;
 })(typeof window !== "undefined" ? window : globalThis);

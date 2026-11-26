@@ -154,6 +154,8 @@ function buatDunia(opsi = {}) {
   D.zanite = () => D.fetchCalls.filter((c) => c.url.endsWith("/api/zanite"));
   D.tidakPernahAbort = () => D.SRs.every((r) => !r.aborted);
   D.unggah = () => D.fetchCalls.filter((c) => c.url.includes("/api/zanite/log"));
+  D.badan = (c) => JSON.parse(c.init ? c.init.body : c.data);   // badan unggahan (fetch) atau beacon
+  D.o = o;                                                      // boleh diubah di tengah tes
   D.peringatan = (pesan, tingkat = 2) => D.jalankan(`ucapkan(${JSON.stringify({ pesan, tingkat, kelas: "uji" })})`);
   return D;
 }
@@ -998,7 +1000,7 @@ async function tes(nama, fn) {
     d.ucap("Janit"); await d.maju(800 + 150 + DURASI_BICARA + 600);     // dua langkah, sesudah ekor 500 ms balasan
     d.ucap("itu apa di depan?"); await d.maju(1300 + 1000);                // jawaban
     const L = d.ctx.Zanite.laporan();
-    cek("header: versi, userAgent, suara + bahasa, TAIL/DIAM/LEMAH", /versi: zanite-app-6/.test(L) && /userAgent: UA-uji/.test(L) && /suara: Suara Indonesia \(in-ID\)/.test(L) && /TAIL_MS: 500/.test(L) && /DIAM_MS: 800/.test(L) && /LEMAH_MS: 1200/.test(L), L.slice(0, 400));
+    cek("header: versi, userAgent, suara + bahasa, TAIL/DIAM/LEMAH", /versi: zanite-app-7/.test(L) && /userAgent: UA-uji/.test(L) && /suara: Suara Indonesia \(in-ID\)/.test(L) && /TAIL_MS: 500/.test(L) && /DIAM_MS: 800/.test(L) && /LEMAH_MS: 1200/.test(L), L.slice(0, 400));
     cek("hitungan: wake per tipe", /wake per tipe: .*=\d/.test(L), L);
     for (const k of ["gema dibuang", "transkrip diterima saat app bicara", "wake saat app bicara", "peringatan ditahan saat fokus", "selesai-paksa", "pengenal restart", "galat pengenal per jenis", "permintaan terkirim: 1", "jawaban per jenis: jawaban=1", "jawaban usang dibuang: 0", "bip gagal: 0"])
       cek("hitungan memuat: " + k, L.includes(k), k);
@@ -1257,9 +1259,14 @@ async function tes(nama, fn) {
     cek("diunggah di 60 dtk", d.unggah().length === 1, d.unggah().length);
     const u = d.unggah()[0];
     cek("bentuk: POST teks polos ke /api/zanite/log?sesi=", u.url === "/api/zanite/log?sesi=sesi-uji" && u.init.method === "POST" && u.init.headers["Content-Type"] === "text/plain;charset=UTF-8", [u.url, u.init.headers]);
-    cek("badan = teks yang sama dengan 'Salin log Zanite'", u.init.body.startsWith("== LOG ZANITE ==\nversi: zanite-app-6") && u.init.body.includes("== HITUNGAN =="), u.init.body.slice(0, 80));
+    const b1 = d.badan(u);
+    cek("unggahan pertama: dari=1, kepala (header + hitungan), baris, tanpa penutup", b1.dari === 1 && b1.kepala.startsWith("== LOG ZANITE ==\nversi: zanite-app-7") && b1.kepala.includes("== HITUNGAN ==") && b1.baris.length > 0 && b1.akhir === undefined && !u.url.includes("akhir"), [b1.dari, b1.baris.length]);
+    cek("sejak awal sesi: baris mulai() ikut", /mulai\(\) oleh/.test(b1.baris[0]), b1.baris[0]);
+    d.ctx.Zanite.catat("PENANDA-KEDUA");
     await d.maju(60000);
     cek("diunggah lagi di 120 dtk", d.unggah().length === 2, d.unggah().length);
+    const b2 = d.badan(d.unggah()[1]);
+    cek("hanya baris sesudah unggahan pertama, nomor menyambung", b2.dari === b1.baris.length + 1 && b2.baris.some((x) => x.includes("PENANDA-KEDUA")) && !b2.baris.some((x) => b1.baris.includes(x)), [b2.dari, b1.baris.length]);
     // Berhenti 5 dtk sesudah unggahan berkala: ditunda sampai lewat 20 dtk, tidak dibuang
     await d.maju(5000);
     d.ctx.Zanite.berhenti("berhentiKamera (Berhenti)");
@@ -1268,6 +1275,8 @@ async function tes(nama, fn) {
     d.ctx.Zanite.berhenti("lagi");
     await d.maju(20000);
     cek("dikirim sekali sesudah jarak 20 dtk, memuat baris berhenti()", d.unggah().length === 3 && d.unggah()[2].t - d.unggah()[1].t >= 20000 && /berhenti\(\) oleh berhentiKamera/.test(d.unggah()[2].init.body), d.unggah().map((c) => c.t - t0));
+    const b3 = d.badan(d.unggah()[2]);
+    cek("Berhenti: penutup berisi header + hitungan, ditandai akhir=1", d.unggah()[2].url.endsWith("&akhir=1") && /^\n== AKHIR ==\nversi: zanite-app-7/.test(b3.akhir) && b3.akhir.includes("== HITUNGAN ==") && b3.dari === b2.dari + b2.baris.length, [d.unggah()[2].url, b3.dari]);
     await d.maju(200000);
     cek("sesudah berhenti: tidak ada unggahan berkala", d.unggah().length === 3, d.unggah().length);
 
@@ -1286,24 +1295,18 @@ async function tes(nama, fn) {
     cek("Zanite belum pernah hidup: tidak diunggah", d.beacon.length === 0 && d.unggah().length === 0);
     await d.mulai();
     d.ls.pagehide();
-    cek("sendBeacon dengan teks log", d.beacon.length === 1 && d.beacon[0].url === "/api/zanite/log?sesi=sesi-uji" && typeof d.beacon[0].data === "string" && d.beacon[0].data.startsWith("== LOG ZANITE =="), d.beacon.length);
+    const b = d.beacon.length === 1 && d.badan(d.beacon[0]);
+    cek("sendBeacon: baris + penutup, akhir=1", b && d.beacon[0].url === "/api/zanite/log?sesi=sesi-uji&akhir=1" && b.dari === 1 && b.baris.length > 0 && b.akhir.includes("== HITUNGAN ==") && b.kepala.startsWith("== LOG ZANITE =="), d.beacon.length);
     d.ctx.Zanite.berhenti("jedaOtomatis");                           // visibilitychange sesudah pagehide
     cek("tidak mengunggah ganda dalam 20 dtk", d.unggah().length === 0);
+    await d.maju(21000);
+    // beacon belum pasti diterima: baris diulang dengan nomor yang sama (server membuang yang ganda)
+    const u = d.unggah().length === 1 && d.badan(d.unggah()[0]);
+    cek("halaman tetap hidup: dari nomor 1 lagi, baris beacon diulang persis", u && u.dari === 1 && b.baris.every((x, i) => u.baris[i] === x) && u.baris.length > b.baris.length, d.unggah().length);
 
     const e = buatDunia({ beaconTolak: true });
     await e.mulai(); e.ls.pagehide(); await e.maju(10);
-    cek("sendBeacon ditolak: fetch keepalive", e.unggah().length === 1 && e.unggah()[0].init.keepalive === true, e.unggah().length);
-
-    // log besar (non-ASCII): dipangkas dari baris tertua supaya muat
-    const f = buatDunia();
-    await f.mulai();
-    for (let i = 0; i < 400; i++) f.ctx.Zanite.catat("baris-" + i + " " + "é".repeat(600));
-    f.ls.pagehide();
-    const isi = f.beacon[0].data;
-    cek("beacon <= 60000 byte, baris terbaru dipertahankan", Buffer.byteLength(isi, "utf8") <= 60000 && isi.includes("baris-399 ") && !isi.includes("baris-100 ") && isi.includes("== HITUNGAN =="), Buffer.byteLength(isi, "utf8"));
-    cek("satu baris log dibatasi 500 karakter", f.ctx.Zanite.debug().every((x) => x.length < 560));
-    await f.maju(60000);
-    cek("unggahan biasa <= 190000 byte", f.unggah().length === 1 && Buffer.byteLength(f.unggah()[0].init.body, "utf8") <= 190000, f.unggah().length);
+    cek("sendBeacon ditolak: fetch keepalive", e.unggah().length === 1 && e.unggah()[0].init.keepalive === true && e.unggah()[0].url.endsWith("&akhir=1"), e.unggah().length);
 
     for (const opsi of [{ logGagal: true }, { kodeLog: 429 }]) {
       const g = buatDunia(opsi);
@@ -1316,6 +1319,82 @@ async function tes(nama, fn) {
     const s = buatDunia({ statusZanite: false });
     await s.mulai(); await s.maju(70000); s.ls.pagehide();
     cek("Zanite tidak tersedia: tidak ada unggahan", s.unggah().length === 0 && s.beacon.length === 0);
+  });
+
+  await tes("unggah log: gagal diulang tanpa lubang, penutup yang gagal diulang terbatas, sesi berganti", async () => {
+    const d = buatDunia({ logGagal: true });
+    await d.mulai();
+    d.ctx.Zanite.catat("PENANDA-SATU");
+    await d.maju(60010);
+    const g = d.badan(d.unggah()[0]);
+    d.o.logGagal = false;
+    await d.maju(60000);
+    const u = d.badan(d.unggah()[1]);
+    cek("sesudah gagal: dikirim ulang dari baris yang sama, plus yang baru", g.dari === 1 && u.dari === 1 && g.baris.every((x, i) => u.baris[i] === x) && u.baris.length > g.baris.length, [g.baris.length, u.baris.length]);
+    await d.maju(60000);
+    const v = d.badan(d.unggah()[2]);
+    cek("sesudah ok: tidak dikirim lagi", v.dari === u.baris.length + 1 && !v.baris.some((x) => x.includes("PENANDA-SATU")), [v.dari, u.baris.length]);
+
+    // penutup gagal: pengatur berkala sudah mati, jadi diulang sendiri, paling banyak 3 kali
+    const e = buatDunia();
+    await e.mulai(); await e.maju(5000);
+    e.o.logGagal = true;
+    e.ctx.Zanite.berhenti("uji"); await e.maju(300000);
+    cek("penutup gagal: 1 + 3 ulangan, semuanya membawa penutup", e.unggah().length === 4 && e.unggah().every((c) => e.badan(c).akhir && c.url.endsWith("&akhir=1") && e.badan(c).dari === 1), e.unggah().length);
+    cek("jarak ulangan >= 20 dtk", e.unggah().every((c, i, a) => !i || c.t - a[i - 1].t >= 20000), e.unggah().map((c) => c.t));
+
+    // sesi berganti (kamera mulai lagi): baris sesi lama tetap ke sesi lama, nomor sesi baru mulai dari 1
+    const f = buatDunia();
+    await f.mulai();
+    f.ctx.Zanite.catat("PENANDA-LAMA");
+    f.jalankan('SESI = "sesi-baru"');
+    f.ctx.Zanite.catat("PENANDA-BARU");
+    await f.maju(60010);
+    const per = (nama) => f.unggah().filter((c) => c.url.includes("sesi=" + nama)).map((c) => f.badan(c));
+    const lama = per("sesi-uji"), anyar = per("sesi-baru");
+    cek("tiap sesi mendapat barisnya sendiri", lama.length === 1 && anyar.length === 1 && lama[0].baris.some((x) => x.includes("PENANDA-LAMA")) && !lama[0].baris.some((x) => x.includes("PENANDA-BARU")) && anyar[0].baris.some((x) => x.includes("PENANDA-BARU")) && anyar[0].dari === 1, f.unggah().map((c) => c.url));
+  });
+
+  await tes("unggah log: seluruh sesi tersimpan walau lebih dari 300 baris; potongan per unggahan dan beacon", async () => {
+    // 1000 baris dalam beberapa menit: setiap nomor terkirim tepat sekali, berurutan
+    const d = buatDunia();
+    await d.mulai();
+    for (let i = 0; i < 1000; i++) {
+      d.ctx.Zanite.catat("baris-" + i + " " + "x".repeat(150));
+      if (i % 100 === 99) await d.maju(15000);
+    }
+    await d.maju(120000);
+    const semua = [];
+    let urut = true;
+    for (const c of d.unggah()) { const b = d.badan(c); if (b.dari !== semua.length + 1) urut = false; semua.push(...b.baris); }
+    const nomor = semua.map((x) => (x.match(/baris-(\d+) /) || [])[1]).filter(Boolean).map(Number);
+    cek("berurutan tanpa lubang dan tanpa ganda", urut && nomor.length === 1000 && nomor.every((n, i) => n === i), [urut, nomor.length, d.unggah().length]);
+    cek("Salin log tetap 300 baris", d.ctx.Zanite.debug().length === 300);
+    cek("unggahan berjarak >= 20 dtk", d.unggah().every((c, i, a) => !i || c.t - a[i - 1].t >= 20000), d.unggah().map((c) => c.t));
+
+    // >= 30000 byte menunggu: diunggah tanpa menunggu 60 dtk
+    const e = buatDunia();
+    await e.mulai();
+    for (let i = 0; i < 100; i++) e.ctx.Zanite.catat("y".repeat(400));
+    await e.maju(5);
+    cek("diunggah segera karena ukuran", e.unggah().length === 1, e.unggah().length);
+
+    // antrean besar (non-ASCII): beacon memuat baris TERTUA yang muat + penutup; sisanya menyusul tanpa lubang
+    const f = buatDunia({ logGagal: true });
+    await f.mulai();
+    for (let i = 0; i < 400; i++) f.ctx.Zanite.catat("baris-" + i + " " + "é".repeat(600));
+    f.ls.pagehide();
+    const isi = f.beacon[0].data, b = f.badan(f.beacon[0]);
+    cek("beacon <= 60000 byte, berurutan dari awal, penutup menyebut yang belum terkirim", Buffer.byteLength(isi, "utf8") <= 60000 && b.dari === 1 && isi.includes("baris-0 ") && !isi.includes("baris-399 ") && /== AKHIR ==\n\(\d+ baris terakhir belum terkirim\)/.test(b.akhir), [Buffer.byteLength(isi, "utf8"), b.dari]);
+    cek("satu baris log dibatasi 500 karakter", f.ctx.Zanite.debug().every((x) => x.length < 560));
+    f.o.logGagal = false;
+    await f.maju(200000);
+    const ok = f.unggah();                             // unggahan biasa sesudah beacon
+    cek("unggahan biasa <= 190000 byte", ok.every((c) => Buffer.byteLength(c.init.body, "utf8") <= 190000), ok.map((c) => Buffer.byteLength(c.init.body, "utf8")));
+    const dapat = [];
+    let sambung = true;
+    for (const c of ok) { const x = f.badan(c); if (x.dari > dapat.length + 1) sambung = false; x.baris.forEach((t, i) => { dapat[x.dari - 1 + i] = t; }); }
+    cek("semua 400 baris akhirnya terkirim", sambung && dapat.filter((x) => /baris-\d+ /.test(x)).length === 400, [sambung, dapat.length, ok.length]);
   });
 
   console.log("alur zanite: " + (total - gagal) + "/" + total + " lulus");
