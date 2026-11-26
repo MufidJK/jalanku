@@ -14,7 +14,8 @@ let namaSuara = "belum dibuka";
 
 function pilihSuaraIndonesia() {
   const daftar = window.speechSynthesis.getVoices();
-  return daftar.find((v) => v.lang.toLowerCase().startsWith("id")) || null;
+  // Android melaporkan bahasa Indonesia sebagai "in-ID" / "in_ID", jadi terima "id" DAN "in".
+  return daftar.find((v) => /^(id|in)([-_]|$)/i.test(v.lang)) || null;
 }
 
 // Dipanggil saat tombol Mulai ditekan: "membuka" suara di HP.
@@ -32,7 +33,11 @@ function bukaSuara() {
 
 function setBisu(nilai) {
   bisu = nilai;
-  if (bisu && "speechSynthesis" in window) window.speechSynthesis.cancel();
+  if (bisu && "speechSynthesis" in window) {
+    sintesisDibatalkan();
+    window.speechSynthesis.cancel();
+  }
+  if (window.Zanite) window.Zanite.bisuBerubah(bisu); // Bisu = Zanite tidak mendengar
 }
 
 function ucapkan(peringatan) {
@@ -63,9 +68,17 @@ function ucapkan(peringatan) {
     navigator.vibrate([200, 100, 200]);
   }
 
+  // Fokus Zanite (sejak kata bangun sampai alurnya selesai): tingkat 1 dan 2 tidak diucapkan, dan tidak dicatat
+  // sebagai sudah diucapkan, jadi berulang seperti biasa sesudah fokus selesai. Layar tetap diperbarui oleh app.js.
+  if (peringatan.tingkat !== 3 && window.Zanite && window.Zanite.fokus()) {
+    window.Zanite.peringatanDitahan(peringatan.pesan);
+    return;
+  }
+
   if ("speechSynthesis" in window && !bisu) {
     const synth = window.speechSynthesis;
     if (peringatan.tingkat === 3) {
+      sintesisDibatalkan();
       synth.cancel(); // memotong suara yang sedang bicara
     } else if (synth.speaking) {
       return; // tingkat rendah tidak memotong dan tidak menumpuk antrean
@@ -77,6 +90,7 @@ function ucapkan(peringatan) {
     u.volume = pengaturanSuara.volume;
     const v = pilihSuaraIndonesia();
     if (v) u.voice = v;
+    pantauBicara(u, peringatan.pesan, undefined, peringatan.tingkat);
     synth.speak(u);
   }
 
@@ -90,6 +104,7 @@ function ucapkan(peringatan) {
 function ucapkanSistem(teks) {
   if (!("speechSynthesis" in window) || bisu) return;
   const synth = window.speechSynthesis;
+  sintesisDibatalkan();
   synth.cancel();
   const u = new SpeechSynthesisUtterance(teks);
   u.lang = "id-ID";
@@ -97,7 +112,113 @@ function ucapkanSistem(teks) {
   u.volume = pengaturanSuara.volume;
   const v = pilihSuaraIndonesia();
   if (v) u.voice = v;
+  pantauBicara(u, teks);
   synth.speak(u);
+}
+
+// Zanite: beri tahu kapan app sedang bicara. Mic Zanite tidak pernah dimatikan; transkrip yang datang
+// selama app bicara (dan sebentar sesudahnya) dibuang oleh zanite.js.
+function pantauBicara(u, teks, saatPutus, tingkat) {
+  if (window.Zanite) window.Zanite.bicaraPantau(u, teks, saatPutus, tingkat);
+}
+
+// Tepat sebelum speechSynthesis.cancel(): ucapan yang dibatalkan belum tentu mengirim end/error, jadi Zanite
+// diberi tahu supaya tidak menunggu pengaman 15-20 detik.
+function sintesisDibatalkan() {
+  if (window.Zanite) window.Zanite.sintesisDibatalkan();
+}
+
+// Jawaban/balasan Zanite. TIDAK memotong suara lain: peringatan tingkat 3 yang sedang bicara selesai dulu, ucapan
+// masuk antrean di belakangnya. Peringatan tingkat 3 berikutnya tetap memotongnya (synth.cancel di ucapkan).
+// label: "balas" | "jawab" (untuk log siklus hidup). Janji selesai (dengan alasannya) bila ucapan habis ("end"),
+// gagal ("error"), dibatalkan ("cancel"), dipaksa selesai oleh pelacak ("paksa"), lewat batas pengaman ("pengaman"),
+// atau tidak pernah mulai walau sudah diulang sekali ("gagal").
+//
+// Chrome HP kadang membuang speak() yang datang tepat sesudah cancel() tanpa event apa pun. Karena itu:
+//  - speak() diberi jarak JEDA_SESUDAH_CANCEL_MS dari cancel() terakhir;
+//  - pengawas: bila tidak ada event "start" dan sintesis tidak sedang bicara selama BATAS_START_MS sesudah speak(),
+//    ucapan dibatalkan dan diulang SEKALI; bila tetap tidak mulai, menyerah ("gagal") dan alur ditutup oleh pemanggil.
+const JEDA_SESUDAH_CANCEL_MS = 150;
+const BATAS_START_MS = 1500;
+const PERIODE_PENGAWAS_MS = 250;
+
+function ucapkanZanite(teks, label) {
+  return new Promise((selesai) => {
+    if (!("speechSynthesis" in window) || bisu || !teks) return selesai("lewat");
+    const nama = label || "jawab";
+    const synth = window.speechSynthesis;
+    const Z = window.Zanite;
+    const log = (t) => { if (Z && Z.catat) Z.catat(nama + ": " + t); };
+    const kini = () => performance.now();
+    const t0 = kini();
+    const ms = () => Math.round(kini() - t0) + " ms";
+    let beres = false, percobaan = 0, token = 0, sudahMulai = false, tSpeak = 0, tSibuk = 0, pengawas = null;
+    const akhir = (alasan) => {
+      if (beres) return;
+      beres = true;
+      clearTimeout(pengawas);
+      clearTimeout(pengaman);
+      log(alasan + " " + ms());
+      selesai(alasan);
+    };
+    const pengaman = setTimeout(() => akhir("pengaman"), 20000 + teks.length * 120);
+
+    function awasi(saya) {
+      const periksa = () => {
+        if (beres || saya !== token || sudahMulai) return;
+        const t = kini();
+        if (synth.speaking) tSibuk = t;                    // ada ucapan lain yang bicara: giliran kita belum tiba
+        if (t - Math.max(tSpeak, tSibuk) >= BATAS_START_MS) { tanpaStart(saya); return; }
+        pengawas = setTimeout(periksa, PERIODE_PENGAWAS_MS);
+      };
+      pengawas = setTimeout(periksa, PERIODE_PENGAWAS_MS);
+    }
+
+    // saya: percobaan yang dinilai gagal; panggilan dari percobaan lama (atau sesudah selesai) diabaikan.
+    function tanpaStart(saya) {
+      if (beres || saya !== token) return;
+      token += 1;                                          // event dari ucapan lama tidak dihiraukan lagi
+      sintesisDibatalkan();
+      synth.cancel();
+      if (percobaan >= 2) { log("gagal " + ms()); akhir("gagal"); return; }
+      log("ulang (tanpa start) " + ms());
+      coba();
+    }
+
+    function coba() {
+      percobaan += 1;
+      const saya = ++token;
+      sudahMulai = false;
+      const u = new SpeechSynthesisUtterance(teks);
+      u.lang = "id-ID";
+      u.rate = pengaturanSuara.rate;
+      u.volume = pengaturanSuara.volume;
+      const v = pilihSuaraIndonesia();
+      if (v) u.voice = v;
+      u.addEventListener("start", () => { if (saya === token) { sudahMulai = true; log("start " + ms()); } });
+      u.addEventListener("end", () => { if (saya === token) akhir("end"); });
+      u.addEventListener("error", () => { if (saya === token) akhir("error"); });
+      // saatPutus: dipotong cancel / dipaksa selesai oleh pelacak -> janji selesai saat itu juga, bukan setelah pengaman
+      // Dipaksa selesai oleh pelacak padahal event "start" tidak pernah datang = ucapan dibuang, BUKAN selesai:
+      // diperlakukan sebagai tanpa-start (diulang sekali), bukan membuka jendela perintah dalam diam.
+      pantauBicara(u, teks, (alasan) => {
+        if (saya !== token) return;
+        if (alasan === "paksa" && !sudahMulai) setTimeout(() => tanpaStart(saya), 0);
+        else akhir(alasan);
+      });
+      const bicara = () => {
+        if (beres || saya !== token) return;
+        tSpeak = tSibuk = kini();
+        log("speak" + (percobaan > 1 ? " (ulang)" : "") + " " + ms());
+        synth.speak(u);
+        awasi(saya);
+      };
+      const sisa = JEDA_SESUDAH_CANCEL_MS - (Z && Z.cancelTerakhir ? kini() - Z.cancelTerakhir() : Infinity);
+      if (sisa > 0) setTimeout(bicara, sisa); else bicara();
+    }
+
+    coba();
+  });
 }
 
 if ("speechSynthesis" in window) {

@@ -100,3 +100,33 @@ jauh_butuh_seg: true           # true = objek kotak "jauh" tidak jadi peringatan
 tahan_dekat_ms: 1500             # A: peringatan objek "di depan, dekat" diulang sampai N ms sesudah hilang (0 = mati); tidak memperpanjang diri
 samping_maks_tingkat: 2          # B: objek kiri/kanan paling tinggi tingkat ini (3 = mati) ...
 samping_masuk_tengah_min: 0.15   # ... kecuali kotaknya masuk zona tengah >= bagian lebar gambar ini (tetap tingkat normal)
+
+# --- Zanite (asisten suara, Tahap 6) ---
+# Semua kunci boleh dihapus: server memakai nilai bawaan yang sama dengan di bawah.
+# Kunci API TIDAK di sini: GEMINI_API_KEY dan GROQ_API_KEY ada di .env (keduanya tier gratis). aktif: false = Zanite
+# mati, bagian server lain tidak berubah.
+zanite:
+  aktif: true
+  # Rantai model, dicoba berurutan. Pindah ke entri berikutnya bila: batas waktu, 429, 5xx, atau jaringan putus.
+  # 404 (model tidak ada) dan 400 "model_decommissioned" dari Groq (model dicabut) juga pindah, dan entri itu tidak dicoba
+  # lagi sampai server dimulai ulang. 400 lain, 401/403, dan hasil penjaga (klaim-aman, bocor, json) tidak pernah berpindah. penyedia: gemini | groq.
+  # Entri yang kuncinya tidak ada di .env dilewati.
+  # PENYIMPANGAN dari aturan urutan (keputusan Mufid, 26 Nov, sesudah hasil). Aturan yang ditulis sebelum hasil menaruh
+  # groq di depan (7/7, median 1,07 dtk; gemini-3.5-flash-lite 7/7, 2,05 dtk; gemini-3.1-flash-lite "tidak konklusif").
+  # Diubah karena cacat mutu yang tidak dicakup 7 aturan: kerucut di kiri disebut di 3 dari 8 jawaban "jelaskan sekitar"
+  # Groq, 7 dari 7 jawaban gemini-3.5; satu klaim "licin" yang tidak bisa dipastikan. Aturan 8 untuk cek berikutnya ada di
+  # tests/zanite/cek_langsung.py. Kuota gratis Groq sekitar 8 ribu token/menit; lebih dari itu 429 dan pindah.
+  rantai:
+    - {penyedia: gemini, model: gemini-3.5-flash-lite}
+    - {penyedia: groq, model: qwen/qwen3.8-27b}
+    - {penyedia: gemini, model: gemini-3.1-flash-lite}
+  batas_model_utama_s: 4      # tiap entri yang masih punya penerus paling lama sekian dtk; entri terakhir memakai sisanya
+  batas_waktu_s: 9            # anggaran TOTAL semua entri (klien HP menunggu 10 dtk)
+  lewati_utama_setelah_gagal: 2   # per entri: gagal (waktu habis/429/5xx) sekian kali berturut-turut -> dilewati
+  lama_lewati_utama_s: 300        # selama sekian detik; sesudahnya dicoba lagi, satu keberhasilan mereset hitungan
+  per_menit_per_klien: 4      # per IP klien
+  per_menit_global: 10        # semua klien (tier gratis pernah 429 setelah sekitar 20 per menit)
+  per_hari_global: 200
+  maks_body_kb: 400
+  sisi_maks_px: 640
+  umur_deteksi_maks_ms: 2000

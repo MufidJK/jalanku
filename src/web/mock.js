@@ -128,3 +128,15 @@ async function ambilMock() {
     jalur: s.jalur,
   };
 }
+// Mode mock: status server dan jawaban Zanite palsu, supaya alur suara bisa dites di laptop tanpa server.
+function ambilStatusMock() {
+  return { siap: true, model: "mock", versi_kontrak: 1, zanite: true };
+}
+
+async function ambilJawabanZaniteMock() {
+  await new Promise((r) => setTimeout(r, 1200));
+  return {
+    jawaban: "Ini jawaban contoh dari Zanite. Di kiri ada pilar, jaraknya sedang.",
+    jenis: "jawaban",
+  };
+}

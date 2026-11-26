@@ -1,0 +1,42 @@
+/* Teks status Zanite: kecil, bukan tombol, tidak bisa disentuh. Tampil hanya saat Zanite mendengar / memproses. */
+#zanite-status {
+  align-self: flex-end;
+  max-width: 100%;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  background: rgba(22, 24, 29, 0.85);
+  border-radius: 14px;
+  pointer-events: none;
+}
+#zanite-status[hidden] { display: none; }
+
+/* Zanite aktif (mendengarkan kata bangun): redup, bukan tombol */
+#zanite-status.redup { opacity: 0.55; font-weight: 600; }
+
+/* Tombol log uji di panel Atur (bukan layar utama) */
+#panel { max-height: calc(100dvh - 280px); overflow-y: auto; }
+#salin-log-zanite {
+  display: block;
+  width: 100%;
+  margin-top: 14px;
+  height: 52px;
+  font-size: 18px;
+  font-weight: 700;
+  border: none;
+  border-radius: var(--radius-kecil);
+  background: var(--permukaan-2);
+  color: var(--teks);
+}
+#salin-log-zanite[hidden], #teks-log-zanite[hidden] { display: none; }
+#teks-log-zanite {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  box-sizing: border-box;
+  font-size: 12px;
+  background: var(--tinta);
+  color: var(--teks);
+  border: 1px solid var(--permukaan-2);
+  border-radius: var(--radius-kecil);
+}
