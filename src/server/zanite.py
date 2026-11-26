@@ -98,6 +98,7 @@ Aturan jawaban:
 - Jika pengguna meminta penjelasan sekitar, atau ucapannya tidak jelas: jelaskan apa yang ada di depan pengguna dalam maksimal 2 kalimat pendek, sekitar 25 kata. Sebut lebih dulu rintangan atau hal berbahaya yang paling dekat, lalu paling banyak 2 hal lain.
 - Jika pengguna mengajukan pertanyaan lain: jawab pertanyaan itu tentang isi foto dalam 1 sampai 2 kalimat pendek.
 - Rintangan atau hal berbahaya yang paling dekat, dan setiap hal berbahaya lain yang kamu sebut, WAJIB disertai posisi (kiri, tengah, kanan) dan perkiraan jarak kasar (dekat, sedang, jauh), misalnya "pilar di kiri, sedang".
+- SETIAP rintangan atau hal berbahaya yang jaraknya dekat WAJIB disebut, semuanya, di jawaban apa pun, walaupun jawabannya jadi lebih panjang daripada batas di atas. Sebut yang dekat paling awal, dengan posisi dan kata "dekat". Batas 2 kalimat, 25 kata, dan 2 hal lain berlaku untuk hal-hal lainnya.
 - Aktif sebutkan benda yang terlihat di foto walau tidak ada di daftar deteksi JalanKu, misalnya kerucut lalu lintas, rambu, pintu, tempat sampah, atau pegangan tangga. Jangan hanya mengulang daftar deteksi. Foto adalah sumber utama; daftar deteksi hanya petunjuk tambahan dan bisa keliru.
 - Kelas pilar di JalanKu juga mencakup tiang, bollard, dan kerucut lalu lintas. Kalau di foto bendanya jelas kerucut atau tiang, sebut nama sebenarnya.
 - Jangan mengira pengguna memakai tongkat. Jangan menyebut tongkat kecuali di dalam kalimat pengingat keselamatan di bawah.
@@ -105,7 +106,7 @@ Aturan jawaban:
 
 Aturan keselamatan:
 - JANGAN PERNAH mengatakan jalan aman, bebas rintangan, boleh dilewati, atau tidak ada bahaya, dalam jawaban apa pun. Kamu bukan sistem keselamatan. Peringatan JalanKu tetap yang utama.
-- HANYA jika pengguna bertanya soal keselamatan (misalnya aman, bahaya, boleh jalan, bisa lewat), mulai jawaban dengan: "Saya tidak bisa memastikan jalannya aman. Ikuti peringatan JalanKu dan gunakan tongkat atau pendamping." lalu sebutkan apa yang terlihat dalam 1 kalimat pendek saja (sekitar 12 kata; kalimat pengingat itu tidak dihitung dalam batas kalimat).
+- HANYA jika pengguna bertanya soal keselamatan (misalnya aman, bahaya, boleh jalan, bisa lewat), mulai jawaban dengan: "Saya tidak bisa memastikan jalannya aman. Ikuti peringatan JalanKu dan gunakan tongkat atau pendamping." lalu sebutkan apa yang terlihat dalam 1 sampai 2 kalimat pendek (kalimat pengingat itu tidak dihitung dalam batas kalimat; setiap rintangan yang dekat tetap wajib disebut).
 - Untuk pertanyaan lain, JANGAN menambahkan kalimat pengingat keselamatan itu.
 - JANGAN PERNAH menggambarkan jalan atau suatu area sebagai terbuka, kosong, lapang, lowong, lancar, atau bisa dilalui. Sebutkan benda-bendanya saja, bukan keadaan jalannya.
 
@@ -174,9 +175,56 @@ def susun_isi(ucapan, deteksi, pesan=None):
 _EMOJI = re.compile("[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0000FE0F\U0000200D]")
 
 
+# "dekat" sebagai jarak. "di dekat pilar" dan "dekat dengan pilar" menyatakan letak, bukan jarak ke pengguna.
+_BUKAN_JARAK = re.compile(r"\b(?:tidak|tak)\s+dekat\b|\b(?:di\s+dekat|dekat\s+dengan)\b(?!\s+anda\b)", re.I)
+_DEKAT = re.compile(r"\b(?:ter)?dekat\b", re.I)
+
+
+def menyebut_dekat(kalimat):
+    """True bila kalimat menyebut sesuatu yang jaraknya dekat (dipakai untuk prioritas pemotongan)."""
+    return bool(_DEKAT.search(_BUKAN_JARAK.sub(" ", kalimat)))
+
+
+def _potong_kata(teks, maks):
+    """Potong di batas kata, paling panjang maks karakter, diakhiri titik."""
+    if len(teks) <= maks:
+        return teks
+    return teks[: maks - 1].rsplit(" ", 1)[0].rstrip(",;:.") + "."
+
+
+def potong_jawaban(t, maks):
+    """Muatkan t ke maks karakter dengan membuang kalimat utuh. Urutan prioritas: penolakan pembuka ("Maaf, ..."),
+    lalu kalimat yang menyebut sesuatu yang DEKAT, lalu keterangan lain. Kalimat terpilih tetap dalam urutan asli.
+    Kalimat dipotong di batas kata hanya bila tidak satu pun kalimat "dekat" (atau, tanpa itu, kalimat pertama) muat."""
+    if len(t) <= maks:
+        return t
+    kalimat = re.split(r"(?<=[.!?])\s+", t)
+    tolak = [0] if kalimat[0].lower().startswith("maaf") else []
+    dekat = [i for i, k in enumerate(kalimat) if i not in tolak and menyebut_dekat(k)]
+    lain = [i for i in range(len(kalimat)) if i not in tolak and i not in dekat]
+    pilih = {}
+
+    def ruang():
+        return maks - sum(len(k) + 1 for k in pilih.values())      # termasuk spasi sebelum kalimat berikutnya
+
+    for i in tolak + dekat:
+        if len(kalimat[i]) <= ruang():
+            pilih[i] = kalimat[i]
+    if dekat and not any(i in pilih for i in dekat):
+        pilih[dekat[0]] = _potong_kata(kalimat[dekat[0]], ruang())
+    if all(i in pilih for i in dekat):          # keterangan lain tidak mengisi tempat bila ada hal dekat yang terbuang
+        for i in lain:
+            if len(kalimat[i]) > ruang():
+                break
+            pilih[i] = kalimat[i]
+    if not pilih:
+        return _potong_kata(kalimat[0], maks)
+    return " ".join(pilih[i] for i in sorted(pilih))
+
+
 def bersihkan_jawaban(teks):
-    """Buang markdown, emoji, URL; batasi MAKS_JAWABAN karakter. Dipotong di batas kalimat terakhir yang muat;
-    di batas kata hanya bila kalimat pertamanya saja sudah melewati batas."""
+    """Buang markdown, emoji, URL; batasi MAKS_JAWABAN karakter (lihat potong_jawaban). Kalimat pengingat keselamatan
+    di awal jawaban tidak dihitung: pengingat + sampai MAKS_JAWABAN karakter keterangan."""
     if not isinstance(teks, str):
         return CADANGAN
     t = re.sub(r"https?://\S+|www\.\S+", "", teks)
@@ -187,11 +235,11 @@ def bersihkan_jawaban(teks):
     t = re.sub(r"\s+", " ", t).strip()
     if not t:
         return CADANGAN
-    if len(t) > MAKS_JAWABAN:
-        potong = t[: MAKS_JAWABAN + 1]      # +1: kalimat yang berakhir tepat di batas masih ketemu spasinya
-        i = max(potong.rfind(". "), potong.rfind("! "), potong.rfind("? "))
-        t = potong[: i + 1] if i > 0 else t[: MAKS_JAWABAN - 1].rsplit(" ", 1)[0].rstrip(",;:") + "."
-    return t
+    m = _PENGINGAT_AWAL.match(t)
+    if m:
+        sisa = potong_jawaban(t[m.end():].strip(), MAKS_JAWABAN)
+        return m.group(0).strip() + (" " + sisa if sisa else "")
+    return potong_jawaban(t, MAKS_JAWABAN)
 
 
 # Penjaga keluaran 1: klaim aman. Dibuat ketat dan sengaja kasar (aturan Mufid).
@@ -205,6 +253,11 @@ def _pola_kalimat(kalimat):
     """Kalimat -> regex yang toleran spasi dan tanda baca, tanpa membedakan huruf besar/kecil."""
     kata = re.findall(r"\w+", kalimat)
     return re.compile(r"[\W_]*".join(re.escape(k) for k in kata) + r"[\s.!?,;:]*", re.I)
+
+
+# Kalimat pengingat keselamatan yang diminta instruksi sistem; tidak dihitung dalam MAKS_JAWABAN.
+PENGINGAT_AMAN_UCAPAN = "Saya tidak bisa memastikan jalannya aman. Ikuti peringatan JalanKu dan gunakan tongkat atau pendamping."
+_PENGINGAT_AWAL = _pola_kalimat(PENGINGAT_AMAN_UCAPAN)
 
 
 _DISETUJUI = [_pola_kalimat(k) for k in KALIMAT_DISETUJUI]

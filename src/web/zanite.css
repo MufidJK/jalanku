@@ -1,3 +1,55 @@
+/* Pendar tepi Zanite: dua cahaya tegak di tepi kiri dan kanan, memudar ke dalam. Ungu = warna Zanite sendiri;
+   hijau/biru/kuning/merah sudah berarti tingkat peringatan. Di atas video dan lapisan hitam mode suara (z 10),
+   tidak menahan sentuhan. Gerak hanya mengabarkan keadaan: diam = mendengar, denyut pelan = menunggu server,
+   kilat per kata = bicara. */
+#zanite-pendar {
+  --zanite: 166, 107, 255;
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 150ms ease-out;
+}
+#zanite-pendar::before,
+#zanite-pendar::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 36px;
+}
+#zanite-pendar::before {
+  left: 0;
+  background: linear-gradient(to right, rgba(var(--zanite), 0.95), rgba(var(--zanite), 0.35) 40%, rgba(var(--zanite), 0));
+}
+#zanite-pendar::after {
+  right: 0;
+  background: linear-gradient(to left, rgba(var(--zanite), 0.95), rgba(var(--zanite), 0.35) 40%, rgba(var(--zanite), 0));
+}
+#zanite-pendar[data-keadaan="mati"] { opacity: 0; transition: none; }   /* padam seketika (peringatan tingkat 3) */
+#zanite-pendar[data-keadaan="dengar"] { opacity: 0.7; }
+#zanite-pendar[data-keadaan="pikir"] { opacity: 0.3; animation: pendar-pikir 1.8s ease-in-out infinite; }
+#zanite-pendar[data-keadaan="bicara"] { opacity: 0.45; }
+#zanite-pendar[data-keadaan="bicara"].kata { opacity: 1; transition: none; }
+#zanite-pendar[data-keadaan="bicara"].denyut { animation: pendar-bicara 1.2s ease-in-out infinite; }
+@keyframes pendar-pikir {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 0.8; }
+}
+@keyframes pendar-bicara {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 0.75; }
+}
+/* Kurangi gerak: pendar diam, tanpa denyut dan tanpa kilat */
+@media (prefers-reduced-motion: reduce) {
+  #zanite-pendar { transition: none; }
+  #zanite-pendar[data-keadaan="pikir"],
+  #zanite-pendar[data-keadaan="bicara"],
+  #zanite-pendar[data-keadaan="bicara"].kata,
+  #zanite-pendar[data-keadaan="bicara"].denyut { opacity: 0.7; animation: none; }
+}
+
 /* Teks status Zanite: kecil, bukan tombol, tidak bisa disentuh. Tampil hanya saat Zanite mendengar / memproses. */
 #zanite-status {
   align-self: flex-end;

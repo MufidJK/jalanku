@@ -153,9 +153,12 @@ function ucapkanZanite(teks, label) {
     const t0 = kini();
     const ms = () => Math.round(kini() - t0) + " ms";
     let beres = false, percobaan = 0, token = 0, sudahMulai = false, tSpeak = 0, tSibuk = 0, pengawas = null;
+    let uKini = null;                        // ucapan yang sedang dicoba (untuk pendar tepi layar)
+    const lepasPendar = () => { if (uKini && Z && Z.pendarSelesai) Z.pendarSelesai(uKini); };
     const akhir = (alasan) => {
       if (beres) return;
       beres = true;
+      lepasPendar();
       clearTimeout(pengawas);
       clearTimeout(pengaman);
       log(alasan + " " + ms());
@@ -195,6 +198,9 @@ function ucapkanZanite(teks, label) {
       u.volume = pengaturanSuara.volume;
       const v = pilihSuaraIndonesia();
       if (v) u.voice = v;
+      lepasPendar();                         // ucapan percobaan sebelumnya (bila ada) tidak dihitung lagi
+      uKini = u;
+      if (Z && Z.pendarPantau) Z.pendarPantau(u);
       u.addEventListener("start", () => { if (saya === token) { sudahMulai = true; log("start " + ms()); } });
       u.addEventListener("end", () => { if (saya === token) akhir("end"); });
       u.addEventListener("error", () => { if (saya === token) akhir("error"); });

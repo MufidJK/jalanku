@@ -51,7 +51,9 @@
   const UNGGAH_WAKTU_MS = 15000;      // unggahan yang tidak dijawab selama ini dianggap gagal
   const ANTRE_MAKS = 5000;            // baris belum terkirim yang disimpan per sesi; yang tertua dibuang
   const ULANG_AKHIR_MAKS = 3;         // unggahan penutup (Berhenti) yang gagal diulang paling banyak sekian kali
-  const VERSI = "zanite-app-7";
+  const PENDAR_KATA_MS = 40;          // lama kilatan penuh per kata; sesudahnya CSS meredupkannya dalam ~150 ms
+  const PENDAR_TANPA_KATA_MS = 700;   // tanpa satu pun event "boundary" sekian ms sejak ucapan mulai: berdenyut pelan
+  const VERSI = "zanite-app-8";
 
   const daftar = ZC.parseDaftar(ZC.DAFTAR_AWAL);
   const sendiriSaja = ZC.parseDaftar(ZC.SENDIRI_SAJA_AWAL);
@@ -136,6 +138,7 @@
     pemantauTimer = setTimeout(() => {
       pemantauTimer = null;
       sedangBicara();                       // memperbarui pelacak (dan menutup ucapan yang onend-nya tidak datang)
+      perbaruiPendar();                     // peringatan tingkat 3 yang berakhir tanpa onend
       if (pelacak.jumlah() > 0) pantauSintesis();
     }, PANTAU_MS);
   }
@@ -146,7 +149,85 @@
     return typeof ucapkanZanite === "function" ? ucapkanZanite(teks, label) : Promise.resolve("lewat");
   }
 
+  // ---- pendar tepi layar (hiasan keadaan Zanite; aria-hidden, tidak bisa disentuh). Satu elemen, atribut
+  // data-keadaan: mati | dengar (jendela perintah terbuka) | pikir (menunggu server) | bicara (ucapan Zanite).
+  let pendarKini = null;              // ucapan Zanite yang sedang berbunyi: { u, adaKata, denyut }
+  let pendarTimerDenyut = null, pendarTimerKata = null;
+  const pendarUsai = new WeakSet();   // ucapan yang sudah selesai/diganti: event-nya yang telat diabaikan
+  let jawabanAntre = 0;               // id permintaan yang jawabannya sudah datang tetapi belum berbunyi
+
+  function keadaanPendar() {
+    // Bisu (jedaPengenal), Zanite mati, atau peringatan tingkat 3 sedang bicara: tidak ada pendar.
+    if (!hidup || fatal || jedaPengenal || pelacak.adaTingkat3()) return "mati";
+    if (pendarKini) return "bicara";
+    if (fase === "jendela") return "dengar";
+    if (fase === "proses" || jawabanAntre) return "pikir";
+    return "mati";
+  }
+
+  function perbaruiPendar() {
+    try {
+      const el = root.document && root.document.getElementById("zanite-pendar");
+      if (!el) return;
+      const k = keadaanPendar();
+      el.setAttribute("data-keadaan", k);
+      el.classList.toggle("denyut", k === "bicara" && pendarKini.denyut);
+      if (k !== "bicara") el.classList.remove("kata");
+    } catch (e) { /* tidak penting */ }
+  }
+
+  function kilatKata(nyala) {
+    try {
+      const el = root.document && root.document.getElementById("zanite-pendar");
+      if (el) el.classList.toggle("kata", nyala);
+    } catch (e) { /* tidak penting */ }
+  }
+
+  function pendarMulai(u) {
+    if (pendarUsai.has(u) || (pendarKini && pendarKini.u === u)) return;
+    if (u.text !== PESAN_TUNGGU) jawabanAntre = 0;      // "Sebentar." boleh selesai dulu sementara jawaban antre
+    clearTimeout(pendarTimerDenyut);
+    clearTimeout(pendarTimerKata);
+    kilatKata(false);
+    const p = { u, adaKata: false, denyut: false };
+    pendarKini = p;
+    pendarTimerDenyut = setTimeout(() => {
+      if (pendarKini !== p || p.adaKata) return;
+      p.denyut = true;                // HP/suara ini tidak mengirim "boundary": denyut pelan sampai ucapan selesai
+      perbaruiPendar();
+    }, PENDAR_TANPA_KATA_MS);
+    perbaruiPendar();
+  }
+
+  function pendarKata(u) {
+    pendarMulai(u);                   // "start" tidak selalu datang
+    const p = pendarKini;
+    if (!p || p.u !== u || p.denyut) return;
+    p.adaKata = true;
+    if (keadaanPendar() !== "bicara") return;
+    clearTimeout(pendarTimerKata);
+    kilatKata(true);
+    pendarTimerKata = setTimeout(() => kilatKata(false), PENDAR_KATA_MS);
+  }
+
+  // Dipanggil suara.js untuk tiap ucapan Zanite (bukan peringatan), sebelum speak().
+  function pendarPantau(u) {
+    u.addEventListener("start", () => pendarMulai(u));
+    u.addEventListener("boundary", () => pendarKata(u));
+  }
+
+  // Ucapan itu habis, gagal, dibatalkan, atau diganti ulangan.
+  function pendarSelesai(u) {
+    pendarUsai.add(u);
+    if (!pendarKini || pendarKini.u !== u) return;
+    pendarKini = null;
+    clearTimeout(pendarTimerDenyut);
+    clearTimeout(pendarTimerKata);
+    perbaruiPendar();
+  }
+
   function tampilStatus(teks, redup) {
+    perbaruiPendar();                 // tiap pergantian keadaan alur lewat sini
     try {
       const el = root.document && root.document.getElementById("zanite-status");
       if (!el) return;
@@ -470,6 +551,7 @@
     tambah(hitung.wake, e.tipe);
     if (saatBicara) hitung.wakeSaatBicara += 1;
     debug("WAKE " + e.tipe + " '" + e.v + "'" + (saatBicara ? " (saat app bicara)" : ""));
+    jawabanAntre = 0;
     tutupJendela();
     permintaanId += 1;                // jawaban lama (kalau ada) dibuang: pengguna memulai lagi
     mulaiFokus();
@@ -592,14 +674,20 @@
     tambah(hitung.jawaban, jawaban.jenis);
     if (jawaban.alasan) tambah(hitung.alasanCadangan, jawaban.jenis + ":" + jawaban.alasan);
     if (jawaban.model) tambah(hitung.modelJawab, jawaban.model);
+    const usang = gen !== appGenerasi() || jam() - t0 > WAKTU_PERMINTAAN_MS;
     fase = "diam";
+    jawabanAntre = usang ? 0 : id;     // pendar tetap "pikir" sampai jawaban benar-benar berbunyi
     tampilDiam();
-    if (gen !== appGenerasi() || jam() - t0 > WAKTU_PERMINTAAN_MS) {
+    if (usang) {
       hitung.jawabanUsang += 1;
       debug("jawaban usang dibuang");
       return;
     }
-    ucapkanZ(jawaban.teks, "jawab");
+    ucapkanZ(jawaban.teks, "jawab").then(() => {
+      if (jawabanAntre !== id) return;
+      jawabanAntre = 0;                // tidak pernah berbunyi (dibatalkan/gagal/Bisu)
+      perbaruiPendar();
+    });
   }
 
   function blobKeBase64(blob) {
@@ -646,6 +734,7 @@
   function batalkanAlur() {
     ++siklus;
     permintaanId += 1;
+    jawabanAntre = 0;
     akhiriFokus(null, "alur dibatalkan");
     tutupJendela();
     clearTimeout(tickTimer);
@@ -718,9 +807,10 @@
   // tingkat (opsional): tingkat peringatan; 3 = tidak dipotong oleh kata bangun.
   function bicaraPantau(u, teks, saatPutus, tingkat) {
     const id = pelacak.mulai(15000 + String(teks || "").length * 120, { saatPutus, teks: String(teks || ""), tingkat });   // pengaman: onend kadang tidak datang
-    const selesai = () => pelacak.selesai(id);
+    const selesai = () => { pelacak.selesai(id); perbaruiPendar(); };
     u.addEventListener("end", selesai);
     u.addEventListener("error", selesai);
+    if (tingkat === 3) perbaruiPendar();   // pendar padam seketika
     pantauSintesis();
   }
 
@@ -730,6 +820,7 @@
     tCancelTerakhir = jam();
     const n = pelacak.selesaiSemua();
     if (n) debug("cancel: " + n + " ucapan diakhiri");
+    perbaruiPendar();
   }
 
   // ---- log uji: disalin lewat tombol di panel Atur (300 baris terakhir), dan diunggah otomatis ke server app ini
@@ -946,7 +1037,7 @@
   }
 
   root.Zanite = {
-    mulai, berhenti, bisuBerubah, bicaraPantau, sintesisDibatalkan, fokus, peringatanDitahan,
+    mulai, berhenti, bisuBerubah, bicaraPantau, sintesisDibatalkan, fokus, peringatanDitahan, pendarPantau, pendarSelesai,
     catat: debug, cancelTerakhir: () => tCancelTerakhir, jam,
     debug: () => log.slice(),
     laporan, salinLog,

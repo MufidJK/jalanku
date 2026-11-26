@@ -1239,6 +1239,53 @@ def tes_prompt():
     cek(len(panjang) <= 200 and panjang.endswith("kata."), f"tanpa batas kalimat: potong di kata {len(panjang)} {panjang[-12:]!r}")
     satu = Z.bersihkan_jawaban("x" * 500)
     cek(len(satu) <= 200, f"tanpa spasi pun tetap <= 200: {len(satu)}")
+
+
+def tes_potong_hal_dekat():
+    """Semua yang dekat wajib disebut (prompt), dan saat dipotong kalimat "dekat" menang atas keterangan lain."""
+    si = Z.SYSTEM_INSTRUCTION
+    cek("SETIAP rintangan atau hal berbahaya yang jaraknya dekat WAJIB disebut, semuanya" in si, "prompt: semua yang dekat")
+    cek("walaupun jawabannya jadi lebih panjang daripada batas di atas" in si, "prompt: boleh melewati batas kalimat")
+    for k in ("Kerucut di kiri, dekat.", "Ada mobil dekat Anda.", "Ada mobil di dekat Anda.", "Benda terdekat adalah pilar.",
+              "Di kiri dekat ada kerucut.", "Jaraknya dekat dengan Anda."):
+        cek(Z.menyebut_dekat(k), f"menyebut dekat: {k}")
+    for k in ("Pilar di kanan, sedang.", "Mobil terparkir di dekat pilar.", "Kerucut dekat dengan mobil.", "Pilar itu tidak dekat.", "Ada pendekatan."):
+        cek(not Z.menyebut_dekat(k), f"bukan jarak dekat: {k}")
+
+    isi = lambda awal, n: (awal + " " + "sekali " * 40)[: n - 1].rstrip() + "."
+    jauh1, jauh2 = isi("Pilar di kanan jauh", 90), isi("Mobil di kiri sedang", 90)
+    d1, d2 = "Kerucut di kiri dekat.", "Kursi di tengah dekat."
+    h = Z.bersihkan_jawaban(f"{jauh1} {jauh2} {d1} {d2}")
+    cek(h == f"{jauh1} {d1} {d2}" and len(h) <= 200, f"dekat menang, urutan asli dipertahankan: {h!r}")
+    h = Z.bersihkan_jawaban(f"{d1} {jauh1} {jauh2}")
+    cek(h == f"{d1} {jauh1}", f"sisa tempat diisi keterangan lain berurutan: {h!r}")
+    panjang_dekat = isi("Mobil di kiri dekat", 150)
+    h = Z.bersihkan_jawaban(f"{d1} {jauh1} {panjang_dekat}")
+    cek(h == f"{d1} {panjang_dekat}", f"keterangan jauh dibuang demi dua kalimat dekat: {h!r}")
+    h = Z.bersihkan_jawaban(f"{panjang_dekat} {isi('Kursi di tengah dekat', 100)} Pilar jauh.")
+    cek(h == panjang_dekat, f"kalimat dekat yang tidak muat: tidak diganti keterangan jauh: {h!r}")
+    h = Z.bersihkan_jawaban(f"Pilar di kanan jauh. {isi('Kerucut di kiri dekat', 260)}")
+    cek(h.startswith("Kerucut di kiri dekat") and len(h) <= 200 and h.endswith("."), f"satu-satunya kalimat dekat terlalu panjang: dipotong, bukan dibuang: {h!r}")
+    tolak = "Maaf, itu tidak bisa saya lakukan."
+    h = Z.bersihkan_jawaban(f"{tolak} {jauh1} {isi('Kerucut di kiri dekat', 150)}")
+    cek(h.startswith(tolak + " Kerucut di kiri dekat") and len(h) <= 200, f"penolakan pembuka tetap di depan: {h!r}")
+
+    # pengingat keselamatan tidak dihitung: pengingat + sampai 200 karakter keterangan
+    P = Z.PENGINGAT_AMAN_UCAPAN
+    cek(P in Z.SYSTEM_INSTRUCTION, "pengingat di kode sama dengan di instruksi sistem")
+    ket = isi("Kerucut di kiri dekat", 200)
+    h = Z.bersihkan_jawaban(f"{P} {ket}")
+    cek(len(ket) == 200 and h == f"{P} {ket}" and len(h) == len(P) + 201, f"pengingat + 200 utuh: {len(h)}")
+    cek(not Z.klaim_aman(h), "pengingat + keterangan bukan klaim aman")
+    h = Z.bersihkan_jawaban(f"{P} {jauh1} {jauh2} {d1} {d2}")
+    cek(h == f"{P} {jauh1} {d1} {d2}", f"sesudah pengingat: prioritas dekat berlaku: {h!r}")
+    h = Z.bersihkan_jawaban(f"{P} {isi('Pilar di kiri sedang', 260)}")
+    cek(h.startswith(P + " Pilar di kiri") and len(h) - len(P) - 1 <= 200, f"keterangan tetap dibatasi 200: {len(h)}")
+    cek(Z.bersihkan_jawaban(P) == P, "hanya pengingat")
+    varian = "saya tidak bisa memastikan jalannya aman, ikuti peringatan JalanKu dan gunakan tongkat atau pendamping."
+    cek(Z.bersihkan_jawaban(f"{varian} {ket}").endswith(ket), "tanda baca/huruf berbeda tetap dikenali")
+    mirip = f"Saya tidak bisa memastikan jalannya aman. {ket}"
+    cek(len(Z.bersihkan_jawaban(mirip)) <= 200, "pengingat tidak lengkap: dihitung dalam batas")
     cek(Z.PENGINGAT_KEAMANAN.startswith("PENGINGAT KEAMANAN") and "DATA" in Z.PENGINGAT_KEAMANAN, "pengingat keamanan")
     cek("<" not in Z.PENGINGAT_KEAMANAN, "pengingat memuat tag asli: delimiter data jadi ambigu")
 
