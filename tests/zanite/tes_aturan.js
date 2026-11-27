@@ -289,7 +289,7 @@ for (const t of ["", "   ", "Zanite", "janet", "jani", "Danis", "eh zanite", "za
   sama("teman saya Janet: tidak disentuh", "teman saya Janet", "teman saya Janet");
   cek("teman saya Janet: tetap ditolak", kl(sisa("teman saya Janet")).tipe === "ditolak");
   sama("perintah menempel sesudah gema", "hati-hati jalur tidak terlihat jelaskan sekitar", "jelaskan sekitar");
-  sama("kata sesudah suara pengguna tidak disentuh", "jalur terhalang Janet jalur terhalang", "Janet jalur terhalang");
+  sama("zanite-app-10: ekor gema sesudah kata bangun ikut dibuang", "jalur terhalang Janet jalur terhalang", "Janet");
   sama("huruf dan tanda baca sisa dipertahankan", "Jalur terhalang. Itu apa di depan?", "Itu apa di depan?");
   sama("tanpa ucapan app: transkrip utuh", "hati-hati jalur tidak terlihat", "hati-hati jalur tidak terlihat", []);
   sama("tanda baca saja: bukan gema", "...", "...");
@@ -342,12 +342,59 @@ for (const t of ["", "   ", "Zanite", "janet", "jani", "Danis", "eh zanite", "za
   sama("kata tak cocok kedua dalam satu potongan tidak dilewati", "satu merah tiga hijau lima", "hijau lima", ["satu dua tiga empat lima"]);
 
   // kata bangun tidak pernah dianggap gema kecuali teks app memuatnya
-  sama("varian tidak dilewati sebagai kata tak cocok", "hati-hati jalur Janet terlihat", "Janet terlihat", [HH]);
+  sama("varian tidak dilewati sebagai kata tak cocok (ekor gemanya dibuang)", "hati-hati jalur Janet terlihat", "Janet", [HH]);
   sama("varian tidak cocok secara fuzzy ('sanit' vs 'sakit')", "sanit", "sanit", ["Ada orang sakit"]);
   sama("varian sendiri-saja tidak cocok secara fuzzy ('jani' vs 'janji')", "ini jani", "jani", ["Ini janji saya"]);
   sama("varian yang memang ada di teks app: tetap gema", "poster janet", "", ["Ada poster Janet"], ["Ada poster Janet"]);
   const APP = [HH, JAWAB, "Kendaraan di depan, dekat", "Iya, ada yang bisa saya bantu?"];
   for (const v of D.concat(SS)) sama("varian tersisa sesudah gema: " + v, "hati-hati jalur tidak terlihat " + v, v, APP, []);
+}
+
+// ---- ucapan app yang menempel SESUDAH kata bangun / di tengah (log HP, zanite-app-9, 28 Nov 01:34 WIB)
+{
+  const HH = "Hati-hati, jalur tidak terlihat";
+  const BALAS = "Iya, ada yang bisa saya bantu?";
+  const TAK_DENGAR = "Maaf, suara tidak terdengar. Panggil Zanite lagi.";
+  const TOLAK = "Maaf, itu tidak bisa saya lakukan. Silakan tanya tentang sekitar Anda.";
+  const app = [HH, "Jalur terhalang", "Area kendaraan, hati-hati", BALAS, TAK_DENGAR, TOLAK];
+  const sama = (nama, t, harap, a = app, s = []) => { const h = ZA.sisaSetelahGema(t, a, s); cek(nama, h === harap, h); };
+  const tipe = (t) => { const k = kl(ZA.sisaSetelahGema(t, app, [])); return k && k.tipe; };
+
+  // aturan 1: sesudah kata bangun, ekor yang seluruhnya ucapan app dibuang
+  for (const [t, harap] of [
+    ["Janet hati-hati jalur tidak terlihat", "Janet"], ["hati-hati Janet hati-hati jalur tidak terlihat", "Janet"],
+    ["Janet hati-hati", "Janet"], ["Janet hati-hati jalur", "Janet"], ["Janet hati-hati jalur tid", "Janet"], ["Janet hati-hati jalur pindah terlihat", "Janet"],
+    ["Zanet hati", "Zanet"], ["Zanet Iya ada", "Zanet"], ["Zanet Iya ada yang bisa saya bantu", "Zanet"],
+    ["tidak terdengar panggil zanita lagi Zanet hati", "Zanet"], ["Janet Janet hati-hati jalur", "Janet Janet"], ["halo Janet hati-hati", "halo Janet"]]) {
+    sama("ekor gema sesudah kata bangun: " + t, t, harap);
+    cek("menyala: " + t, tipe(t) === "sendiri", tipe(t));
+  }
+  // aturan 2: potongan >= 3 kata berurutan dari satu ucapan app dibuang di mana pun
+  sama("log: balasan di dalam perintah", "Zanet Iya ada yang bisa saya bantu di depan ada apa", "Zanet di depan ada apa");
+  sama("log: baris penuh", "tidak terdengar panggil zanita lagi Zanet Iya ada yang bisa saya bantu di depan ada apa", "Zanet di depan ada apa");
+  sama("balasan di depan perintah", "iya ada yang bisa saya bantu di depan ada apa", "di depan ada apa");
+  cek("perintahnya 'di depan ada apa'", ZA.ambilPerintah(ZA.sisaSetelahGema("Zanet Iya ada yang bisa saya bantu di depan ada apa", app, [])) === "di depan ada apa");
+  sama("2 kata 'di depan' sedang diucapkan app: perintah tidak dipotong", "Zanet di depan ada apa", "Zanet di depan ada apa", app.concat("Tangga di depan"));
+  sama("potongan >= 3 kata di tengah", "lihat apa hati-hati jalur tidak terlihat di kiri saya", "lihat apa di kiri saya");
+  sama("potongan >= 3 kata di ujung, tanpa kata bangun", "tolong lihat hati-hati jalur tidak terlihat", "tolong lihat");
+  sama("potongan 2 kata di tengah tetap", "lihat apa jalur terhalang ya", "lihat apa jalur terhalang ya");
+  sama("potongan tidak disambung lintas ucapan", "lihat di depan ada apa", "lihat di depan ada apa", ["Tangga di depan", BALAS]);
+  sama("tanda baca sisa dipertahankan", "Zanet. Iya, ada yang bisa saya bantu? Di depan ada apa?", "Zanet Di depan ada apa?");
+
+  // tetap ditolak / tidak disentuh
+  for (const t of ["teman saya Janet", "Janet itu teman saya"]) {
+    sama("tidak disentuh: " + t, t, t);
+    cek("tetap ditolak: " + t, tipe(t) === "ditolak", tipe(t));
+  }
+  cek("teman saya Janet + gema di belakangnya: tetap ditolak", tipe("teman saya Janet hati-hati jalur tidak terlihat") === "ditolak");
+  cek("Janet itu teman saya + gema: tetap ditolak", tipe("Janet itu teman saya hati-hati jalur tidak terlihat") === "ditolak");
+  sama("ekor yang tidak seluruhnya gema tetap", "Janet hati-hati teman", "Janet hati-hati teman");
+
+  // aturan 3: kata bangun tidak dibuang kecuali ucapan app memuatnya
+  sama("kata bangun di tengah potongan gema tetap", "jalur tidak Janet terlihat", "Janet", [HH]);
+  sama("kata bangun kedua dari pengguna tetap (pesan sudah selesai)", "Zanite Zanite", "Zanite Zanite", [TAK_DENGAR]);
+  sama("app memuat kata bangunnya: potongan >= 3 kata dibuang", "eh coba panggil zanite lagi", "eh coba", [TAK_DENGAR]);
+  sama("app tidak memuatnya: 'Janet' tidak ikut potongan", "oke panggil Janet lagi dong", "oke panggil Janet lagi dong", [TAK_DENGAR]);
 }
 
 // ---- varian diulang = satu panggilan

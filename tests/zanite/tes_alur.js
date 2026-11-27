@@ -1011,7 +1011,7 @@ async function tes(nama, fn) {
     d.ucap("Janit"); await d.maju(800 + 150 + DURASI_BICARA + 600);     // dua langkah, sesudah ekor 500 ms balasan
     d.ucap("itu apa di depan?"); await d.maju(1300 + 1000);                // jawaban
     const L = d.ctx.Zanite.laporan();
-    cek("header: versi, userAgent, suara + bahasa, TAIL/DIAM/LEMAH", /versi: zanite-app-9/.test(L) && /userAgent: UA-uji/.test(L) && /suara: Suara Indonesia \(in-ID\)/.test(L) && /TAIL_MS: 500/.test(L) && /DIAM_MS: 800/.test(L) && /LEMAH_MS: 1200/.test(L), L.slice(0, 400));
+    cek("header: versi, userAgent, suara + bahasa, TAIL/DIAM/LEMAH", /versi: zanite-app-10/.test(L) && /userAgent: UA-uji/.test(L) && /suara: Suara Indonesia \(in-ID\)/.test(L) && /TAIL_MS: 500/.test(L) && /DIAM_MS: 800/.test(L) && /LEMAH_MS: 1200/.test(L), L.slice(0, 400));
     cek("hitungan: wake per tipe", /wake per tipe: .*=\d/.test(L), L);
     for (const k of ["gema dibuang", "transkrip diterima saat app bicara", "wake saat app bicara", "peringatan ditahan saat fokus", "selesai-paksa", "pengenal restart", "galat pengenal per jenis", "permintaan terkirim: 1", "jawaban per jenis: jawaban=1", "jawaban usang dibuang: 0", "bip gagal: 0"])
       cek("hitungan memuat: " + k, L.includes(k), k);
@@ -1085,6 +1085,40 @@ async function tes(nama, fn) {
     d.ucap("teman saya Janet", true);
     await d.maju(2000);
     cek("'teman saya Janet' ditolak", d.bips === 0 && d.ctx.Zanite.debug().some((x) => /ditolak: "teman saya Janet"/.test(x)), d.ctx.Zanite.debug().slice(-4));
+  });
+
+  await tes("log HP zanite-app-9: ucapan app yang menempel sesudah kata bangun tidak menolak wake atau mengotori perintah", async () => {
+    // 18:34:47: pengguna memanggil di tengah peringatan; peringatan terus menempel di hasil yang sama
+    const d = buatDunia();
+    await d.mulai();
+    d.peringatan(HH); await d.maju(100);
+    const i = d.ucap("hati-hati Janet hati-hati", false); await d.maju(200);
+    d.ucap("hati-hati Janet hati-hati jalur", false, i); await d.maju(200);
+    d.ucap("hati-hati Janet hati-hati jalur tidak terlihat", false, i); await d.maju(810);
+    cek("'Janet hati-hati jalur tidak terlihat' menyala sekali", d.bips === 1 && d.ctx.Zanite._uji.hitung.wake.sendiri === 1, [d.bips, d.ctx.Zanite._uji.hitung.wake]);
+    cek("tidak ada yang ditolak", !d.ctx.Zanite.debug().some((x) => /ditolak:/.test(x)), d.ctx.Zanite.debug().filter((x) => /ditolak/.test(x)));
+
+    // 18:35:27: balasan Zanite sendiri menempel sesudah kata bangun, lalu pertanyaan di hasil yang sama
+    const e = buatDunia();
+    await e.mulai();
+    e.peringatan(HH); await e.maju(100);
+    const j = e.ucap("Zanet", false); await e.maju(810 + 150 + 50);
+    cek("menyala, balasan berbunyi", e.bips === 1 && e.synth.sedang && e.synth.sedang.text === BALAS, [e.bips, e.diucap]);
+    e.ucap("Zanet hati", false, j); await e.maju(100);
+    e.ucap("Zanet Iya ada", false, j); await e.maju(100);
+    e.ucap("Zanet Iya ada yang bisa saya bantu", false, j); await e.maju(DURASI_BICARA + 100);
+    cek("jendela terbuka, balasan sendiri bukan perintah", e.status.textContent === "Zanite mendengar" && e.zanite().length === 0, [e.status.textContent, e.zanite().length]);
+    e.ucap("Zanet Iya ada yang bisa saya bantu di depan", false, j); await e.maju(150);
+    e.ucap("Zanet Iya ada yang bisa saya bantu di depan ada apa", true, j); await e.maju(1300);
+    cek("perintah terkirim = 'di depan ada apa'", e.zanite().length === 1 && JSON.parse(e.zanite()[0].init.body).teks === "di depan ada apa", e.zanite().map((c) => c.init.body));
+    cek("wake tidak menyala dua kali", e.bips === 1 &&e.ctx.Zanite._uji.hitung.wake.sendiri === 1 && e.diucap.filter((x) => x === BALAS).length === 1, [e.bips, e.ctx.Zanite._uji.hitung.wake, e.diucap]);
+
+    const f = buatDunia();
+    await f.mulai();
+    f.peringatan(HH); await f.maju(100);
+    f.ucap("Janet itu teman saya", true); await f.maju(100);
+    f.ucap("teman saya Janet", true); await f.maju(2000);
+    cek("'Janet itu teman saya' dan 'teman saya Janet' tetap ditolak", f.bips === 0 && f.zanite().length === 0 && f.ctx.Zanite._uji.hitung.wake.sendiri === undefined, [f.bips, f.ctx.Zanite._uji.hitung.wake]);
   });
 
   await tes("jendela perintah: 'Janet di depan ada apa', gema + perintah, dan gema jawaban panjang", async () => {
@@ -1271,7 +1305,7 @@ async function tes(nama, fn) {
     const u = d.unggah()[0];
     cek("bentuk: POST teks polos ke /api/zanite/log?sesi=", u.url === "/api/zanite/log?sesi=sesi-uji" && u.init.method === "POST" && u.init.headers["Content-Type"] === "text/plain;charset=UTF-8", [u.url, u.init.headers]);
     const b1 = d.badan(u);
-    cek("unggahan pertama: dari=1, kepala (header + hitungan), baris, tanpa penutup", b1.dari === 1 && b1.kepala.startsWith("== LOG ZANITE ==\nversi: zanite-app-9") && b1.kepala.includes("== HITUNGAN ==") && b1.baris.length > 0 && b1.akhir === undefined && !u.url.includes("akhir"), [b1.dari, b1.baris.length]);
+    cek("unggahan pertama: dari=1, kepala (header + hitungan), baris, tanpa penutup", b1.dari === 1 && b1.kepala.startsWith("== LOG ZANITE ==\nversi: zanite-app-10") && b1.kepala.includes("== HITUNGAN ==") && b1.baris.length > 0 && b1.akhir === undefined && !u.url.includes("akhir"), [b1.dari, b1.baris.length]);
     cek("sejak awal sesi: baris mulai() ikut", /mulai\(\) oleh/.test(b1.baris[0]), b1.baris[0]);
     d.ctx.Zanite.catat("PENANDA-KEDUA");
     await d.maju(60000);
@@ -1287,7 +1321,7 @@ async function tes(nama, fn) {
     await d.maju(20000);
     cek("dikirim sekali sesudah jarak 20 dtk, memuat baris berhenti()", d.unggah().length === 3 && d.unggah()[2].t - d.unggah()[1].t >= 20000 && /berhenti\(\) oleh berhentiKamera/.test(d.unggah()[2].init.body), d.unggah().map((c) => c.t - t0));
     const b3 = d.badan(d.unggah()[2]);
-    cek("Berhenti: penutup berisi header + hitungan, ditandai akhir=1", d.unggah()[2].url.endsWith("&akhir=1") && /^\n== AKHIR ==\nversi: zanite-app-9/.test(b3.akhir) && b3.akhir.includes("== HITUNGAN ==") && b3.dari === b2.dari + b2.baris.length, [d.unggah()[2].url, b3.dari]);
+    cek("Berhenti: penutup berisi header + hitungan, ditandai akhir=1", d.unggah()[2].url.endsWith("&akhir=1") && /^\n== AKHIR ==\nversi: zanite-app-10/.test(b3.akhir) && b3.akhir.includes("== HITUNGAN ==") && b3.dari === b2.dari + b2.baris.length, [d.unggah()[2].url, b3.dari]);
     await d.maju(200000);
     cek("sesudah berhenti: tidak ada unggahan berkala", d.unggah().length === 3, d.unggah().length);
 
