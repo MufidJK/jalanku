@@ -53,7 +53,7 @@
   const ULANG_AKHIR_MAKS = 3;         // unggahan penutup (Berhenti) yang gagal diulang paling banyak sekian kali
   const PENDAR_KATA_MS = 40;          // lama kilatan penuh per kata; sesudahnya CSS meredupkannya dalam ~150 ms
   const PENDAR_TANPA_KATA_MS = 700;   // tanpa satu pun event "boundary" sekian ms sejak ucapan mulai: berdenyut pelan
-  const VERSI = "zanite-app-8";
+  const VERSI = "zanite-app-9";
 
   const daftar = ZC.parseDaftar(ZC.DAFTAR_AWAL);
   const sendiriSaja = ZC.parseDaftar(ZC.SENDIRI_SAJA_AWAL);

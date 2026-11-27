@@ -1011,7 +1011,7 @@ async function tes(nama, fn) {
     d.ucap("Janit"); await d.maju(800 + 150 + DURASI_BICARA + 600);     // dua langkah, sesudah ekor 500 ms balasan
     d.ucap("itu apa di depan?"); await d.maju(1300 + 1000);                // jawaban
     const L = d.ctx.Zanite.laporan();
-    cek("header: versi, userAgent, suara + bahasa, TAIL/DIAM/LEMAH", /versi: zanite-app-8/.test(L) && /userAgent: UA-uji/.test(L) && /suara: Suara Indonesia \(in-ID\)/.test(L) && /TAIL_MS: 500/.test(L) && /DIAM_MS: 800/.test(L) && /LEMAH_MS: 1200/.test(L), L.slice(0, 400));
+    cek("header: versi, userAgent, suara + bahasa, TAIL/DIAM/LEMAH", /versi: zanite-app-9/.test(L) && /userAgent: UA-uji/.test(L) && /suara: Suara Indonesia \(in-ID\)/.test(L) && /TAIL_MS: 500/.test(L) && /DIAM_MS: 800/.test(L) && /LEMAH_MS: 1200/.test(L), L.slice(0, 400));
     cek("hitungan: wake per tipe", /wake per tipe: .*=\d/.test(L), L);
     for (const k of ["gema dibuang", "transkrip diterima saat app bicara", "wake saat app bicara", "peringatan ditahan saat fokus", "selesai-paksa", "pengenal restart", "galat pengenal per jenis", "permintaan terkirim: 1", "jawaban per jenis: jawaban=1", "jawaban usang dibuang: 0", "bip gagal: 0"])
       cek("hitungan memuat: " + k, L.includes(k), k);
@@ -1271,7 +1271,7 @@ async function tes(nama, fn) {
     const u = d.unggah()[0];
     cek("bentuk: POST teks polos ke /api/zanite/log?sesi=", u.url === "/api/zanite/log?sesi=sesi-uji" && u.init.method === "POST" && u.init.headers["Content-Type"] === "text/plain;charset=UTF-8", [u.url, u.init.headers]);
     const b1 = d.badan(u);
-    cek("unggahan pertama: dari=1, kepala (header + hitungan), baris, tanpa penutup", b1.dari === 1 && b1.kepala.startsWith("== LOG ZANITE ==\nversi: zanite-app-8") && b1.kepala.includes("== HITUNGAN ==") && b1.baris.length > 0 && b1.akhir === undefined && !u.url.includes("akhir"), [b1.dari, b1.baris.length]);
+    cek("unggahan pertama: dari=1, kepala (header + hitungan), baris, tanpa penutup", b1.dari === 1 && b1.kepala.startsWith("== LOG ZANITE ==\nversi: zanite-app-9") && b1.kepala.includes("== HITUNGAN ==") && b1.baris.length > 0 && b1.akhir === undefined && !u.url.includes("akhir"), [b1.dari, b1.baris.length]);
     cek("sejak awal sesi: baris mulai() ikut", /mulai\(\) oleh/.test(b1.baris[0]), b1.baris[0]);
     d.ctx.Zanite.catat("PENANDA-KEDUA");
     await d.maju(60000);
@@ -1287,7 +1287,7 @@ async function tes(nama, fn) {
     await d.maju(20000);
     cek("dikirim sekali sesudah jarak 20 dtk, memuat baris berhenti()", d.unggah().length === 3 && d.unggah()[2].t - d.unggah()[1].t >= 20000 && /berhenti\(\) oleh berhentiKamera/.test(d.unggah()[2].init.body), d.unggah().map((c) => c.t - t0));
     const b3 = d.badan(d.unggah()[2]);
-    cek("Berhenti: penutup berisi header + hitungan, ditandai akhir=1", d.unggah()[2].url.endsWith("&akhir=1") && /^\n== AKHIR ==\nversi: zanite-app-8/.test(b3.akhir) && b3.akhir.includes("== HITUNGAN ==") && b3.dari === b2.dari + b2.baris.length, [d.unggah()[2].url, b3.dari]);
+    cek("Berhenti: penutup berisi header + hitungan, ditandai akhir=1", d.unggah()[2].url.endsWith("&akhir=1") && /^\n== AKHIR ==\nversi: zanite-app-9/.test(b3.akhir) && b3.akhir.includes("== HITUNGAN ==") && b3.dari === b2.dari + b2.baris.length, [d.unggah()[2].url, b3.dari]);
     await d.maju(200000);
     cek("sesudah berhenti: tidak ada unggahan berkala", d.unggah().length === 3, d.unggah().length);
 
