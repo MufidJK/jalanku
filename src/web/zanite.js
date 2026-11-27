@@ -3,9 +3,9 @@
 //
 // Aturan utama: mic TIDAK PERNAH dimatikan agar tidak mendengar suara app sendiri (setiap buka ulang,
 // Android membunyikan suara Asisten Google). Pada hasil yang kata pertamanya datang saat app bicara (atau dalam ekor
-// TAIL_MS), dari AWAL tiap transkripnya dibuang kata-kata yang cocok dengan ucapan app 60 detik terakhir (gema:
-// peringatan, pesan sistem, balasan dan jawaban Zanite); hanya sisanya (suara pengguna) yang diteruskan ke pencocok
-// kata bangun dan jendela perintah. Hasil yang mulai saat hening diteruskan utuh. Penjaga kedua terhadap bangun sendiri: aturan kata
+// TAIL_MS), tiap transkripnya dibersihkan dari kata-kata yang cocok dengan ucapan app 60 detik terakhir (gema:
+// peringatan, pesan sistem, balasan dan jawaban Zanite; di awal, potongan >= 3 kata di mana pun, dan ekor sesudah
+// kata bangun); hanya sisanya (suara pengguna) yang diteruskan ke pencocok kata bangun dan jendela perintah. Hasil yang mulai saat hening diteruskan utuh. Penjaga kedua terhadap bangun sendiri: aturan kata
 // bangun yang ketat (varian sendirian, diam 800/1200 ms).
 //
 // Fokus Zanite: hanya selama pengguna bicara, yaitu sejak kata bangun sampai perintah tertangkap (kirimPerintah
@@ -53,7 +53,7 @@
   const ULANG_AKHIR_MAKS = 3;         // unggahan penutup (Berhenti) yang gagal diulang paling banyak sekian kali
   const PENDAR_KATA_MS = 40;          // lama kilatan penuh per kata; sesudahnya CSS meredupkannya dalam ~150 ms
   const PENDAR_TANPA_KATA_MS = 700;   // tanpa satu pun event "boundary" sekian ms sejak ucapan mulai: berdenyut pelan
-  const VERSI = "zanite-app-9";
+  const VERSI = "zanite-app-10";
 
   const daftar = ZC.parseDaftar(ZC.DAFTAR_AWAL);
   const sendiriSaja = ZC.parseDaftar(ZC.SENDIRI_SAJA_AWAL);

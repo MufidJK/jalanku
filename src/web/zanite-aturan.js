@@ -6,7 +6,8 @@
 //  - jenisPerintah(): "jelaskan sekitar" (mengandung sekitar/jelas) atau pertanyaan bebas.
 //  - ambilPerintah(): teks transkrip -> teks perintah tanpa kata bangun (null = hanya kata bangun / kosong).
 //  - buatPelacakBicara(): kapan app sedang bicara (+ 500 ms sesudahnya) dan teks ucapan yang baru/sedang berbunyi.
-//  - sisaSetelahGema(): membuang gema ucapan app dari AWAL transkrip; yang tersisa dianggap suara pengguna.
+//  - sisaSetelahGema(): membuang gema ucapan app (di awal, potongan >= 3 kata di mana pun, ekor sesudah kata
+//    bangun); yang tersisa dianggap suara pengguna.
 //  - buatJendela(): jendela perintah 6 detik dan kapan perintah dianggap selesai diucapkan.
 (function (root) {
   const ZC = typeof module !== "undefined" && module.exports ? require("./zanite-cocok.js") : root.ZaniteCocok;
@@ -67,8 +68,10 @@
 
   // ---- penyaring gema. Chrome menggabung ucapan app dan ucapan pengguna ke SATU hasil yang terus tumbuh, jadi
   // gema tidak bisa dinilai per transkrip utuh. Gema dibuang kata demi kata dari AWAL transkrip selama bisa dijelaskan
-  // oleh teks ucapan app yang baru-baru ini berbunyi; sisanya (suara pengguna) yang diteruskan. Kata sesudah suara
-  // pengguna tidak pernah disentuh. Dipakai pemanggil HANYA untuk hasil yang kata pertamanya datang saat app bicara
+  // oleh teks ucapan app yang baru-baru ini berbunyi; sisanya (suara pengguna) yang diteruskan. App yang terus bicara
+  // juga menempel SESUDAH suara pengguna, jadi di sisa itu dibuang pula (zanite-app-10): potongan >= 3 kata berurutan
+  // dari satu ucapan app di mana pun, dan ekor sesudah kata bangun bila seluruhnya ucapan app. Potongan 1-2 kata di
+  // tengah perintah tetap. Dipakai pemanggil HANYA untuk hasil yang kata pertamanya datang saat app bicara
   // (atau dalam ekornya); hasil yang mulai saat hening tidak pernah dipotong.
   //  - satu potongan = kata berurutan di dalam SATU teks app; potongan boleh sambung-menyambung;
   //  - kata dicocokkan dengan toleransi salah dengar Chrome: lihat samaKata();
@@ -145,48 +148,95 @@
   // Kata ternormalisasi + posisinya di teks asli, supaya sisanya dikembalikan dengan huruf dan tanda baca asli.
   function pecah(teks) {
     const out = [];
-    for (const m of String(teks).matchAll(/[\p{L}\p{M}\p{N}]+/gu)) for (const k of token(m[0])) out.push({ k, i: m.index });
+    for (const m of String(teks).matchAll(/[\p{L}\p{M}\p{N}]+/gu)) {
+      for (const k of token(m[0])) out.push({ k, i: m.index, j: m.index + m[0].length, n: out.length });
+    }
     return out;
+  }
+
+  // Telusuri satu potongan: kata transkrip k mulai i dicocokkan dengan teks app a mulai posisi s.
+  // sampai(t) dipanggil untuk tiap t sehingga k[i..t) cocok.
+  function telusur(k, i, a, s, sampai) {
+    const n = k.length;
+    const antre = [[i, s, false]];      // [posisi transkrip, posisi app, sudah memakai satu kata tak cocok]
+    const maju = (t, p, lompat) => { antre.push([t, p, lompat]); sampai(t); };
+    while (antre.length) {
+      const [t, p, lompat] = antre.pop();
+      if (t >= n || p >= a.w.length) continue;
+      let cocok = false;
+      if (samaKata(k[t], a.w[p])) { cocok = true; maju(t + 1, p + 1, lompat); }
+      if (samaGabung(k[t], a.w[p], a.w[p + 1])) { cocok = true; maju(t + 1, p + 2, lompat); }
+      if (t + 1 < n && samaGabung(a.w[p], k[t], k[t + 1])) { cocok = true; maju(t + 2, p + 1, lompat); }
+      // satu kata tak cocok, diapit kata yang cocok; kata bangun tidak pernah dilewati begini
+      if (!cocok && !lompat && t > i && t + 1 < n && !adalahVarian(k[t]) && samaKata(k[t + 1], a.w[p + 1])) maju(t + 2, p + 2, true);
+    }
+  }
+
+  // Berapa kata pertama k yang dapat dijelaskan sebagai gema (potongan sambung-menyambung).
+  function awalanGema(k, app) {
+    const bisa = new Array(k.length + 1).fill(false);   // bisa[n]: n kata pertama dapat dijelaskan sebagai gema
+    bisa[0] = true;
+    let habis = 0;
+    for (let i = 0; i < k.length; i++) {
+      if (!bisa[i]) continue;
+      for (const a of app) {
+        for (let s = 0; s < a.w.length; s++) {
+          telusur(k, i, a, s, (t) => {
+            if (i > 0 && s > 0 && t - i < LOMPAT_MIN) return;
+            if (t - i === 1 && !a.sedang && adalahVarian(k[i])) return;
+            bisa[t] = true;
+            habis = Math.max(habis, t);
+          });
+        }
+      }
+    }
+    return { habis, semua: bisa[k.length] };
+  }
+
+  // Potongan >= POTONGAN_MIN kata berurutan dari SATU ucapan app dibuang di mana pun (tidak disambung lintas ucapan).
+  const POTONGAN_MIN = 3;
+  function tanpaPotonganPanjang(kata, app) {
+    const k = kata.map((x) => x.k), buang = new Array(k.length).fill(false);
+    for (let i = 0; i < k.length; i++) {
+      let jauh = i;
+      for (const a of app) for (let s = 0; s < a.w.length; s++) telusur(k, i, a, s, (t) => { jauh = Math.max(jauh, t); });
+      if (jauh - i >= POTONGAN_MIN) buang.fill(true, i, jauh);
+    }
+    return kata.filter((x, i) => !buang[i]);
+  }
+
+  // Sesudah kata bangun: bila SELURUH sisanya ucapan app (berapa pun katanya), sisanya dibuang. Sisa yang memuat
+  // kata lain tidak disentuh, supaya perintah pengguna tidak terpotong ujungnya.
+  function tanpaEkorSesudahBangun(kata, app) {
+    const k = kata.map((x) => x.k);
+    for (let v = 0; v < k.length; v++) {
+      for (let p = 1; p <= 2; p++) {                    // varian satu kata, atau pasangan ("za net")
+        if (v + p >= k.length || !adalahVarian(k.slice(v, v + p).join(" "))) continue;
+        if (awalanGema(k.slice(v + p), app).semua) return kata.slice(0, v + p);
+      }
+    }
+    return kata;
   }
 
   // teksApp: ucapan app 60 detik terakhir. teksSedang: yang masih berbunyi (termasuk ekor). Hasil: sisa transkrip
   // ("" = seluruhnya gema; teks asli tanpa perubahan bila tidak ada yang dibuang).
+  // Urutan: (1) gema di awal, (2) potongan panjang di mana pun, (3) ekor sesudah kata bangun.
   function sisaSetelahGema(transkrip, teksApp, teksSedang) {
     const asli = String(transkrip || "");
     const kata = pecah(asli);
     const sedang = new Set(teksSedang || []);
     const app = (teksApp || []).map((t) => ({ w: token(t), sedang: sedang.has(t) })).filter((a) => a.w.length);
-    const bisa = new Array(kata.length + 1).fill(false);   // bisa[n]: n kata pertama dapat dijelaskan sebagai gema
-    bisa[0] = true;
-    let habis = 0;
-    const k = kata.map((x) => x.k), n = k.length;
-    // Telusuri satu potongan: kata transkrip mulai i dicocokkan dengan teks app a mulai posisi s.
-    const telusur = (i, a, s) => {
-      const antre = [[i, s, false]];      // [posisi transkrip, posisi app, sudah memakai satu kata tak cocok]
-      const maju = (t, p, lompat) => {
-        antre.push([t, p, lompat]);
-        if (i > 0 && s > 0 && t - i < LOMPAT_MIN) return;
-        if (t - i === 1 && !a.sedang && adalahVarian(k[i])) return;
-        bisa[t] = true;
-        habis = Math.max(habis, t);
-      };
-      while (antre.length) {
-        const [t, p, lompat] = antre.pop();
-        if (t >= n || p >= a.w.length) continue;
-        let cocok = false;
-        if (samaKata(k[t], a.w[p])) { cocok = true; maju(t + 1, p + 1, lompat); }
-        if (samaGabung(k[t], a.w[p], a.w[p + 1])) { cocok = true; maju(t + 1, p + 2, lompat); }
-        if (t + 1 < n && samaGabung(a.w[p], k[t], k[t + 1])) { cocok = true; maju(t + 2, p + 1, lompat); }
-        // satu kata tak cocok, diapit kata yang cocok; kata bangun tidak pernah dilewati begini
-        if (!cocok && !lompat && t > i && t + 1 < n && !adalahVarian(k[t]) && samaKata(k[t + 1], a.w[p + 1])) maju(t + 2, p + 2, true);
-      }
-    };
-    for (let i = 0; i < n; i++) {
-      if (!bisa[i]) continue;
-      for (const a of app) for (let s = 0; s < a.w.length; s++) telusur(i, a, s);
+    let sisa = kata.slice(awalanGema(kata.map((x) => x.k), app).habis);
+    sisa = tanpaEkorSesudahBangun(tanpaPotonganPanjang(sisa, app), app);
+    if (sisa.length === kata.length) return asli;
+    // rangkai lagi dari teks asli: tiap blok kata yang berurutan diambil utuh (huruf dan tanda baca dipertahankan)
+    const blok = [];
+    for (let a = 0, b; a < sisa.length; a = b) {
+      for (b = a + 1; b < sisa.length && sisa[b].n === sisa[b - 1].n + 1;) b++;
+      const akhir = sisa[b - 1];
+      blok.push(asli.slice(sisa[a].i, akhir.n === kata.length - 1 ? asli.length : akhir.j).trim());
     }
-    if (!habis) return asli;
-    return habis >= kata.length ? "" : asli.slice(kata[habis].i).trim();
+    return blok.join(" ");
   }
 
   // true bila teks (>= min kata) seluruhnya potongan berurutan dari kalimat app itu.
